@@ -1,7 +1,7 @@
 [project]
 name = "negotia"
 version = "0.1.0"
-description = "Add your description here"
+description = "Backend foundation for an agentic AI negotiation practice and coaching platform"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

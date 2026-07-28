@@ -12,7 +12,7 @@ coaching.
 
 Negotiation is one of the most valuable professional skills, yet realistic practice opportunities are limited. Negotia aims to provide an AI-powered environment where users can repeatedly practice challenging negotiation scenarios, receive objective feedback, and improve through personalized coaching.
 
-Beyond solving this problem, Negotia is also being developed as an AI engineering portfolio project that demonstrates modern agentic AI architecture, production-oriented backend design, and cloud-native deployment.
+Beyond solving this problem, Negotia is also being developed as an AI engineering portfolio project intended to demonstrate modern agentic AI architecture, production-oriented backend design, and cloud-native deployment.
 
 ## Current status
 
@@ -44,12 +44,14 @@ flowchart TD
 
 ## Technology stack
 
-## Backend
+### Backend
 
 **Current**
 
+- Python 3.12+
 - FastAPI
 - Uvicorn
+- pydantic-settings
 
 ## AI
 
