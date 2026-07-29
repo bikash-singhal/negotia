@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +16,8 @@ class Settings(BaseSettings):
     debug: bool = False
     aws_region: str = "us-east-1"
     aws_profile: str | None = None
+    llm_provider: Literal["fake", "bedrock"] = "fake"
+    bedrock_model_id: str = "amazon.nova-lite-v1:0"
 
 
 settings = Settings()
