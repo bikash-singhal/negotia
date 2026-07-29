@@ -14,6 +14,9 @@ from app.domains.negotiation_turn.repository import NegotiationTurnRepository
 from app.domains.negotiation_turn.service import NegotiationTurnService
 from app.domains.scenario.repository import ScenarioRepository
 from app.domains.scenario.service import ScenarioService
+from app.llm.fake import FakeLLMProvider
+from app.prompts.opponent import OpponentPromptBuilder
+from app.services.opponent import OpponentService
 
 configure_logging(settings.debug)
 logger = logging.getLogger(__name__)
@@ -36,14 +39,22 @@ app = FastAPI(
 )
 scenario_repository = ScenarioRepository()
 negotiation_repository = NegotiationRepository()
+turn_repository = NegotiationTurnRepository()
 app.state.scenario_service = ScenarioService(scenario_repository)
 app.state.negotiation_service = NegotiationService(
     negotiation_repository,
     scenario_repository,
 )
 app.state.negotiation_turn_service = NegotiationTurnService(
-    NegotiationTurnRepository(),
+    turn_repository,
     negotiation_repository,
+)
+app.state.opponent_service = OpponentService(
+    negotiation_repository,
+    scenario_repository,
+    turn_repository,
+    OpponentPromptBuilder(),
+    FakeLLMProvider(),
 )
 
 register_exception_handlers(app)
