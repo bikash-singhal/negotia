@@ -8,6 +8,8 @@ from app.api.v1.router import router as api_v1_router
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging_config import configure_logging
+from app.domains.scenario.repository import ScenarioRepository
+from app.domains.scenario.service import ScenarioService
 
 configure_logging(settings.debug)
 logger = logging.getLogger(__name__)
@@ -28,6 +30,7 @@ app = FastAPI(
     version=settings.api_version,
     lifespan=lifespan,
 )
+app.state.scenario_service = ScenarioService(ScenarioRepository())
 
 register_exception_handlers(app)
 app.include_router(api_v1_router, prefix="/api/v1")
