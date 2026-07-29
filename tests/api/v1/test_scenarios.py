@@ -1,6 +1,6 @@
 from collections.abc import Iterator
 from datetime import datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -95,6 +95,95 @@ def test_create_scenario_rejects_invalid_request(client: TestClient) -> None:
     request_data["difficulty"] = "expert"
 
     response = client.post("/api/v1/scenarios", json=request_data)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_list_scenarios_returns_empty_list_initially(client: TestClient) -> None:
+    response = client.get("/api/v1/scenarios")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_create_then_list_returns_created_scenario(client: TestClient) -> None:
+    created = client.post(
+        "/api/v1/scenarios",
+        json=_valid_scenario_data(),
+    ).json()
+
+    response = client.get("/api/v1/scenarios")
+
+    assert response.status_code == 200
+    assert response.json() == [created]
+
+
+def test_list_scenarios_returns_multiple_scenarios(client: TestClient) -> None:
+    first_request = _valid_scenario_data()
+    second_request = _valid_scenario_data()
+    second_request["title"] = "Commercial lease renewal"
+
+    first = client.post("/api/v1/scenarios", json=first_request).json()
+    second = client.post("/api/v1/scenarios", json=second_request).json()
+
+    response = client.get("/api/v1/scenarios")
+
+    assert response.status_code == 200
+    assert response.json() == [first, second]
+
+
+def test_list_scenarios_excludes_private_fields(client: TestClient) -> None:
+    client.post("/api/v1/scenarios", json=_valid_scenario_data())
+
+    response = client.get("/api/v1/scenarios")
+    scenario = response.json()[0]
+
+    assert "hidden_context" not in scenario
+    assert "walk_away_conditions" not in scenario
+
+
+def test_get_scenario_returns_existing_scenario(client: TestClient) -> None:
+    created = client.post(
+        "/api/v1/scenarios",
+        json=_valid_scenario_data(),
+    ).json()
+
+    response = client.get(f"/api/v1/scenarios/{created['scenario_id']}")
+
+    assert response.status_code == 200
+    assert response.json() == created
+
+
+def test_get_scenario_excludes_private_fields(client: TestClient) -> None:
+    created = client.post(
+        "/api/v1/scenarios",
+        json=_valid_scenario_data(),
+    ).json()
+
+    response = client.get(f"/api/v1/scenarios/{created['scenario_id']}")
+    scenario = response.json()
+
+    assert "hidden_context" not in scenario
+    assert "walk_away_conditions" not in scenario
+
+
+def test_get_missing_scenario_returns_not_found(client: TestClient) -> None:
+    scenario_id = uuid4()
+
+    response = client.get(f"/api/v1/scenarios/{scenario_id}")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "error": {
+            "code": "not_found",
+            "message": f"Scenario with id '{scenario_id}' was not found.",
+        }
+    }
+
+
+def test_get_scenario_rejects_malformed_uuid(client: TestClient) -> None:
+    response = client.get("/api/v1/scenarios/not-a-uuid")
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
