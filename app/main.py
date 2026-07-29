@@ -10,6 +10,8 @@ from app.core.exception_handlers import register_exception_handlers
 from app.core.logging_config import configure_logging
 from app.domains.negotiation.repository import NegotiationRepository
 from app.domains.negotiation.service import NegotiationService
+from app.domains.negotiation_turn.repository import NegotiationTurnRepository
+from app.domains.negotiation_turn.service import NegotiationTurnService
 from app.domains.scenario.repository import ScenarioRepository
 from app.domains.scenario.service import ScenarioService
 
@@ -33,10 +35,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 scenario_repository = ScenarioRepository()
+negotiation_repository = NegotiationRepository()
 app.state.scenario_service = ScenarioService(scenario_repository)
 app.state.negotiation_service = NegotiationService(
-    NegotiationRepository(),
+    negotiation_repository,
     scenario_repository,
+)
+app.state.negotiation_turn_service = NegotiationTurnService(
+    NegotiationTurnRepository(),
+    negotiation_repository,
 )
 
 register_exception_handlers(app)

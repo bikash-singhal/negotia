@@ -40,4 +40,7 @@ class NegotiationTurnService:
         return self._turn_repository.get(turn_id)
 
     def list_turns(self, session_id: UUID) -> list[NegotiationTurn]:
+        if self._negotiation_repository.get(session_id) is None:
+            raise NegotiationSessionNotFoundError(session_id)
+
         return self._turn_repository.list_by_session(session_id)

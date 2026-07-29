@@ -191,10 +191,30 @@ def test_list_turns_delegates_to_repository() -> None:
         negotiation_repository,
     )
     session_id = uuid4()
+    negotiation_repository.get.return_value = _create_session(session_id)
     turns = [_create_turn(session_id), _create_turn(session_id)]
     turn_repository.list_by_session.return_value = turns
 
     result = service.list_turns(session_id)
 
     assert result == turns
+    negotiation_repository.get.assert_called_once_with(session_id)
     turn_repository.list_by_session.assert_called_once_with(session_id)
+
+
+def test_list_turns_raises_when_session_is_missing() -> None:
+    session_id = uuid4()
+    turn_repository = MagicMock(spec=NegotiationTurnRepository)
+    negotiation_repository = MagicMock(spec=NegotiationRepository)
+    negotiation_repository.get.return_value = None
+    service = NegotiationTurnService(
+        turn_repository,
+        negotiation_repository,
+    )
+
+    with pytest.raises(NegotiationSessionNotFoundError) as exc_info:
+        service.list_turns(session_id)
+
+    assert exc_info.value.session_id == session_id
+    negotiation_repository.get.assert_called_once_with(session_id)
+    turn_repository.list_by_session.assert_not_called()
