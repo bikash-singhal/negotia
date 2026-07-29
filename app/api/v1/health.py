@@ -1,3 +1,4 @@
+from app.core.config import settings
 from fastapi import APIRouter
 
 router = APIRouter()
@@ -7,5 +8,5 @@ router = APIRouter()
 async def health() -> dict[str, str]:
     return {
         "status": "healthy",
-        "service": "negotia-api",
+        "service": settings.app_name,
     }
