@@ -13,16 +13,18 @@ from app.domains.scenario.models import Scenario, ScenarioDifficulty
 from app.domains.scenario.repository import ScenarioRepository
 
 
-def _create_scenario() -> Scenario:
-    return Scenario(
-        title="Supplier contract renewal",
-        description="Renegotiate the annual supplier contract and delivery terms.",
-        industry="Manufacturing",
-        opponent_role="Supplier account director",
-        objective="Secure improved pricing and delivery guarantees.",
-        difficulty=ScenarioDifficulty.INTERMEDIATE,
-        personality="Analytical and cautious",
-        negotiation_style="Collaborative",
+def _create_stored_scenario(repository: ScenarioRepository) -> Scenario:
+    return repository.create(
+        Scenario(
+            title="Supplier contract renewal",
+            description="Renegotiate the annual supplier contract and delivery terms.",
+            industry="Manufacturing",
+            opponent_role="Supplier account director",
+            objective="Secure improved pricing and delivery guarantees.",
+            difficulty=ScenarioDifficulty.INTERMEDIATE,
+            personality="Analytical and cautious",
+            negotiation_style="Collaborative",
+        )
     )
 
 
@@ -40,7 +42,7 @@ def _create_session() -> NegotiationSession:
 def test_create_session_when_scenario_exists() -> None:
     negotiation_repository = NegotiationRepository()
     scenario_repository = ScenarioRepository()
-    scenario = scenario_repository.create(_create_scenario())
+    scenario = _create_stored_scenario(scenario_repository)
     service = NegotiationService(negotiation_repository, scenario_repository)
 
     session = service.create_session(
@@ -48,42 +50,28 @@ def test_create_session_when_scenario_exists() -> None:
     )
 
     assert isinstance(session.id, UUID)
+    assert session.scenario_id == scenario.scenario_id
     assert session.status is NegotiationStatus.CREATED
+    assert negotiation_repository.get(session.id) is session
     assert session.created_at.tzinfo is not None
     assert session.created_at.utcoffset() == timedelta(0)
+    assert session.updated_at.tzinfo is not None
+    assert session.updated_at.utcoffset() == timedelta(0)
     assert session.created_at == session.updated_at
 
 
-def test_created_session_contains_scenario_id() -> None:
-    scenario_repository = ScenarioRepository()
-    scenario = scenario_repository.create(_create_scenario())
-    service = NegotiationService(NegotiationRepository(), scenario_repository)
-
-    session = service.create_session(
-        NegotiationSessionCreate(scenario_id=scenario.scenario_id)
-    )
-
-    assert session.scenario_id == scenario.scenario_id
-
-
-def test_created_session_is_stored_in_negotiation_repository() -> None:
-    negotiation_repository = NegotiationRepository()
-    scenario_repository = ScenarioRepository()
-    scenario = scenario_repository.create(_create_scenario())
-    service = NegotiationService(negotiation_repository, scenario_repository)
-
-    session = service.create_session(
-        NegotiationSessionCreate(scenario_id=scenario.scenario_id)
-    )
-
-    assert negotiation_repository.get(session.id) is session
-
-
-def test_missing_scenario_raises_scenario_not_found_error() -> None:
+def test_missing_scenario_raises_and_does_not_store_session() -> None:
     scenario_id = uuid4()
+    stored_sessions = NegotiationRepository()
+    negotiation_repository = MagicMock(
+        spec=NegotiationRepository,
+        wraps=stored_sessions,
+    )
+    scenario_repository = MagicMock(spec=ScenarioRepository)
+    scenario_repository.get.return_value = None
     service = NegotiationService(
-        NegotiationRepository(),
-        ScenarioRepository(),
+        negotiation_repository,
+        scenario_repository,
     )
 
     with pytest.raises(ScenarioNotFoundError) as exc_info:
@@ -91,35 +79,32 @@ def test_missing_scenario_raises_scenario_not_found_error() -> None:
 
     assert exc_info.value.scenario_id == scenario_id
     assert str(exc_info.value) == f"Scenario with id '{scenario_id}' was not found."
+    assert stored_sessions.list() == []
+    scenario_repository.get.assert_called_once_with(scenario_id)
+    negotiation_repository.create.assert_not_called()
 
 
-def test_missing_scenario_does_not_store_session() -> None:
-    negotiation_repository = NegotiationRepository()
+def test_create_session_calls_repositories() -> None:
+    stored_scenarios = ScenarioRepository()
+    scenario = _create_stored_scenario(stored_scenarios)
+    scenario_repository = MagicMock(
+        spec=ScenarioRepository,
+        wraps=stored_scenarios,
+    )
+    negotiation_repository = MagicMock(
+        spec=NegotiationRepository,
+        wraps=NegotiationRepository(),
+    )
     service = NegotiationService(
         negotiation_repository,
-        ScenarioRepository(),
-    )
-
-    with pytest.raises(ScenarioNotFoundError):
-        service.create_session(NegotiationSessionCreate(scenario_id=uuid4()))
-
-    assert negotiation_repository.list() == []
-
-
-def test_create_session_gets_scenario_with_correct_id() -> None:
-    scenario = _create_scenario()
-    scenario_repository = MagicMock(spec=ScenarioRepository)
-    scenario_repository.get.return_value = scenario
-    service = NegotiationService(
-        NegotiationRepository(),
         scenario_repository,
     )
 
-    service.create_session(
-        NegotiationSessionCreate(scenario_id=scenario.scenario_id)
-    )
+    request = NegotiationSessionCreate(scenario_id=scenario.scenario_id)
+    session = service.create_session(request)
 
-    scenario_repository.get.assert_called_once_with(scenario.scenario_id)
+    scenario_repository.get.assert_called_once_with(request.scenario_id)
+    negotiation_repository.create.assert_called_once_with(session)
 
 
 def test_get_session_delegates_to_negotiation_repository() -> None:
