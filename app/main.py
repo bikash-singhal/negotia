@@ -8,6 +8,8 @@ from app.api.v1.router import router as api_v1_router
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging_config import configure_logging
+from app.domains.negotiation.repository import NegotiationRepository
+from app.domains.negotiation.service import NegotiationService
 from app.domains.scenario.repository import ScenarioRepository
 from app.domains.scenario.service import ScenarioService
 
@@ -30,7 +32,12 @@ app = FastAPI(
     version=settings.api_version,
     lifespan=lifespan,
 )
-app.state.scenario_service = ScenarioService(ScenarioRepository())
+scenario_repository = ScenarioRepository()
+app.state.scenario_service = ScenarioService(scenario_repository)
+app.state.negotiation_service = NegotiationService(
+    NegotiationRepository(),
+    scenario_repository,
+)
 
 register_exception_handlers(app)
 app.include_router(api_v1_router, prefix="/api/v1")
