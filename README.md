@@ -52,48 +52,63 @@ through environment configuration.
 ```mermaid
 flowchart TD
     API["Versioned FastAPI API"]
-    Config["Application configuration"] --> Factory["LLM provider selection"]
+    Config["Application configuration"]
+    Factory["LLM provider factory"]
 
     subgraph Scenario["Scenario subsystem"]
-        ScenarioService["Scenario service and repository"]
+        ScenarioAPI["Scenario API"]
+        ScenarioService["ScenarioService"]
+        ScenarioRepository["ScenarioRepository"]
+        ScenarioAPI --> ScenarioService
+        ScenarioService --> ScenarioRepository
     end
 
     subgraph Session["Negotiation Session subsystem"]
-        SessionService["Session service and repository"]
+        SessionAPI["Negotiation API"]
+        SessionService["NegotiationService"]
+        NegotiationRepository["NegotiationRepository"]
+        SessionAPI --> SessionService
+        SessionService --> NegotiationRepository
+        SessionService -->|"validates scenario"| ScenarioRepository
     end
 
     subgraph Turn["Negotiation Turn subsystem"]
-        TurnService["Turn service and repository"]
+        TurnAPI["Turn API"]
+        TurnService["NegotiationTurnService"]
+        TurnRepository["NegotiationTurnRepository"]
+        TurnAPI --> TurnService
+        TurnService --> TurnRepository
+        TurnService -->|"validates session"| NegotiationRepository
     end
 
     subgraph Opponent["Opponent AI subsystem"]
+        OpponentAPI["Opponent-response API"]
         OpponentService["OpponentService"]
         PromptBuilder["OpponentPromptBuilder"]
+
+        OpponentAPI --> OpponentService
+        OpponentService --> PromptBuilder
+        OpponentService -->|"loads scenario"| ScenarioRepository
+        OpponentService -->|"loads session"| NegotiationRepository
+        OpponentService -->|"loads and saves turns"| TurnRepository
     end
 
-    Provider["LLMProvider abstraction"]
+    Provider["LLMProvider protocol"]
     Fake["FakeLLMProvider"]
     Bedrock["BedrockLLMProvider"]
 
-    API --> ScenarioService
-    API --> SessionService
-    API --> TurnService
-    API --> OpponentService
+    API --> ScenarioAPI
+    API --> SessionAPI
+    API --> TurnAPI
+    API --> OpponentAPI
 
-    SessionService -->|"references Scenario by scenario_id"| ScenarioService
-    TurnService -->|"references Session by session_id"| SessionService
+    Config --> Factory
+    Factory -->|"LLM_PROVIDER=fake"| Fake
+    Factory -->|"LLM_PROVIDER=bedrock"| Bedrock
 
-    OpponentService -->|"reads session"| SessionService
-    OpponentService -->|"reads scenario"| ScenarioService
-    OpponentService -->|"reads ordered history"| TurnService
-    OpponentService --> PromptBuilder
     OpponentService --> Provider
-    OpponentService -->|"persists generated opponent turn"| TurnService
-
-    Factory --> Fake
-    Factory --> Bedrock
-    Fake -.->|implements| Provider
-    Bedrock -.->|implements| Provider
+    Fake -.->|"implements"| Provider
+    Bedrock -.->|"implements"| Provider
 ```
 
 Repositories are instantiated once for the application and shared by the services
