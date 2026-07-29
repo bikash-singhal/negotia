@@ -32,14 +32,16 @@ def test_session_create_accepts_valid_scenario_id() -> None:
 
 def test_session_create_rejects_invalid_uuid() -> None:
     with pytest.raises(ValidationError):
-        NegotiationSessionCreate(scenario_id="not-a-uuid")
+        NegotiationSessionCreate.model_validate({"scenario_id": "not-a-uuid"})
 
 
 def test_session_create_rejects_extra_fields() -> None:
     with pytest.raises(ValidationError):
-        NegotiationSessionCreate(
-            scenario_id=uuid4(),
-            unexpected_field="unexpected value",
+        NegotiationSessionCreate.model_validate(
+            {
+                "scenario_id": str(uuid4()),
+                "unexpected_field": "unexpected value",
+            }
         )
 
 
