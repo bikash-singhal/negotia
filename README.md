@@ -2,86 +2,161 @@
 
 > An agentic AI platform for realistic negotiation practice and personalized coaching.
 
-Negotia is being developed as an environment for practicing negotiation scenarios
-and receiving structured, personalized coaching. The repository currently contains
-the backend and domain foundation only; negotiation APIs, AI agents, persistence,
-and a web interface are not implemented yet.
+Negotia is an environment for practicing realistic negotiation scenarios and
+building toward structured, personalized coaching. The current backend now
+supports its first complete vertical AI slice:
+
+```text
+Create scenario
+→ create negotiation session
+→ submit user turn
+→ generate AI opponent response
+→ retrieve ordered conversation history
+```
+
+Coaching, strategy, debrief, memory, and adaptive-difficulty capabilities remain
+future work.
 
 ## Current status
 
-The current milestone provides:
+The Day 5 milestone provides an end-to-end opponent-response workflow through a
+versioned FastAPI API. A scenario supplies the negotiation context, a negotiation
+session references that scenario, ordered turns capture the conversation, and the
+opponent service uses the configured LLM provider to generate and persist the next
+opponent turn.
 
-- A FastAPI application titled `Negotia API`, version `0.1.0`
-- Versioned API routing with `GET /api/v1/health`
-- Environment-based configuration through `pydantic-settings`
-- Standard-library console logging and application lifespan logs
-- Centralized JSON handlers for application, HTTP, validation, and unexpected errors
-- Scenario models, schemas, an in-memory repository, and a service
-- Negotiation-session models, schemas, an in-memory repository, and a service
-- Scenario-existence validation before negotiation-session creation
-- Automated API and domain-layer tests
-- uv dependency management and Ruff linting
+The default fake provider makes local development and automated tests deterministic
+and does not call AWS. The Bedrock provider is also implemented and can be selected
+through environment configuration.
 
-The Scenario and Negotiation domain services are not exposed through API routes.
-Their repositories store data in memory, so data does not survive process restarts.
+## Current functionality
+
+- Versioned FastAPI API under `/api/v1`
+- Scenario creation, listing, and retrieval
+- Negotiation-session creation, listing, and retrieval
+- Negotiation-turn creation and retrieval
+- Ordered turn history for each negotiation session
+- AI opponent-response generation
+- Validation that an opponent response follows a user turn
+- Scenario-aware system prompts and complete-history user prompts
+- Deterministic `FakeLLMProvider` for development and testing
+- AWS Bedrock Runtime provider using the Converse API
+- Configurable `fake` or `bedrock` provider selection
+- Public scenario responses that exclude hidden context and walk-away conditions
+- Shared in-memory repositories for scenarios, sessions, and turns
+- Centralized configuration, logging, and JSON error responses
+- Automated API, domain, service, prompt, provider, and configuration tests
 
 ## Implemented architecture
 
 ```mermaid
 flowchart TD
-    FastAPI["FastAPI application"] --> Health["Versioned health endpoint"]
-    FastAPI --> Errors["Centralized error handlers"]
-    FastAPI --> Config["Configuration and logging"]
+    API["Versioned FastAPI API"]
+    Config["Application configuration"] --> Factory["LLM provider selection"]
 
-    NegotiationService["NegotiationService"] --> NegotiationRepository["In-memory NegotiationRepository"]
-    NegotiationService --> ScenarioRepository["In-memory ScenarioRepository"]
-    ScenarioService["ScenarioService"] --> ScenarioRepository
+    subgraph Scenario["Scenario subsystem"]
+        ScenarioService["Scenario service and repository"]
+    end
+
+    subgraph Session["Negotiation Session subsystem"]
+        SessionService["Session service and repository"]
+    end
+
+    subgraph Turn["Negotiation Turn subsystem"]
+        TurnService["Turn service and repository"]
+    end
+
+    subgraph Opponent["Opponent AI subsystem"]
+        OpponentService["OpponentService"]
+        PromptBuilder["OpponentPromptBuilder"]
+    end
+
+    Provider["LLMProvider abstraction"]
+    Fake["FakeLLMProvider"]
+    Bedrock["BedrockLLMProvider"]
+
+    API --> ScenarioService
+    API --> SessionService
+    API --> TurnService
+    API --> OpponentService
+
+    SessionService -->|"references Scenario by scenario_id"| ScenarioService
+    TurnService -->|"references Session by session_id"| SessionService
+
+    OpponentService -->|"reads session"| SessionService
+    OpponentService -->|"reads scenario"| ScenarioService
+    OpponentService -->|"reads ordered history"| TurnService
+    OpponentService --> PromptBuilder
+    OpponentService --> Provider
+    OpponentService -->|"persists generated opponent turn"| TurnService
+
+    Factory --> Fake
+    Factory --> Bedrock
+    Fake -.->|implements| Provider
+    Bedrock -.->|implements| Provider
 ```
 
-The domain services and repositories are currently tested directly and are not yet
-wired into FastAPI.
+Repositories are instantiated once for the application and shared by the services
+that need them. This lets an opponent response observe scenarios, sessions, and
+turns created through the API.
+
+## End-to-end opponent workflow
+
+1. Create a scenario.
+2. Create a negotiation session linked by `scenario_id`.
+3. Submit a user turn.
+4. Request an opponent response.
+5. Load the session, referenced scenario, and ordered turn history.
+6. Build the scenario-aware system prompt and conversation-history user prompt.
+7. Call the configured LLM provider.
+8. Strip and validate the generated response.
+9. Save it as the next numbered opponent turn.
+10. Retrieve the ordered conversation history.
+
+Illustrative conversation:
+
+```text
+Turn 1 — User:
+We need a ten percent reduction to renew this year.
+
+Turn 2 — Opponent:
+A ten percent reduction would be difficult, but I may be able to consider a
+smaller adjustment for a longer commitment.
+```
+
+This example illustrates the intended interaction and is not a guaranteed model
+output.
 
 ## Domain model
 
 ### Scenario
 
-A Scenario contains the negotiation setup, including its industry, opponent role,
-objective, difficulty, constraints, personality, negotiation style, private
-context, and walk-away conditions.
-
-`ScenarioResponse` intentionally excludes `hidden_context` and
-`walk_away_conditions`. `ScenarioInternalResponse` includes the complete domain
-state for trusted internal use.
+A Scenario defines the opponent role, objective, difficulty, personality,
+negotiation style, constraints, private context, and walk-away conditions. Public
+`ScenarioResponse` objects intentionally exclude private context and walk-away
+conditions.
 
 ### Negotiation session
 
 A NegotiationSession references a Scenario by `scenario_id` and tracks its status
-and timestamps. `NegotiationService` verifies that the referenced Scenario exists
-before creating and storing a session. A missing Scenario raises the domain-level
-`ScenarioNotFoundError`.
+and timestamps.
+
+### Negotiation turn
+
+A NegotiationTurn references a session by `session_id`, identifies the user or
+opponent speaker, stores the message content, and carries a session-specific turn
+number. Session history is returned in turn-number order.
 
 ## Technology stack
-
-### Current
 
 - Python 3.12+
 - FastAPI and Uvicorn
 - Pydantic v2 and pydantic-settings
+- boto3 and AWS Bedrock Runtime
 - Python standard-library logging
 - pytest, FastAPI TestClient, and HTTPX
 - Ruff
 - uv
-
-### Planned
-
-- PostgreSQL
-- LangGraph
-- Amazon Bedrock
-- Evaluation and observability tooling
-- A web frontend
-- Docker and AWS deployment
-
-Planned technologies are not implemented in the current repository.
 
 ## Project structure
 
@@ -89,9 +164,15 @@ Planned technologies are not implemented in the current repository.
 negotia/
 |-- app/
 |   |-- api/
+|   |   |-- dependencies.py
 |   |   `-- v1/
 |   |       |-- health.py
-|   |       `-- router.py
+|   |       |-- negotiations.py
+|   |       |-- router.py
+|   |       |-- scenarios.py
+|   |       `-- turns.py
+|   |-- aws/
+|   |   `-- session.py
 |   |-- core/
 |   |   |-- config.py
 |   |   |-- exception_handlers.py
@@ -99,31 +180,20 @@ negotia/
 |   |   `-- logging_config.py
 |   |-- domains/
 |   |   |-- negotiation/
-|   |   |   |-- exceptions.py
-|   |   |   |-- models.py
-|   |   |   |-- repository.py
-|   |   |   |-- schemas.py
-|   |   |   `-- service.py
+|   |   |-- negotiation_turn/
 |   |   `-- scenario/
-|   |       |-- models.py
-|   |       |-- repository.py
-|   |       |-- schemas.py
-|   |       `-- service.py
+|   |-- llm/
+|   |   |-- bedrock.py
+|   |   |-- factory.py
+|   |   |-- fake.py
+|   |   `-- provider.py
+|   |-- prompts/
+|   |   `-- opponent.py
+|   |-- services/
+|   |   `-- opponent.py
 |   `-- main.py
 |-- tests/
-|   |-- api/
-|   |   `-- v1/
-|   |       `-- test_health.py
-|   `-- domains/
-|       |-- negotiation/
-|       |   |-- test_repository.py
-|       |   |-- test_schemas.py
-|       |   `-- test_service.py
-|       `-- scenario/
-|           |-- test_models.py
-|           |-- test_repository.py
-|           |-- test_schemas.py
-|           `-- test_service.py
+|-- .env.example
 |-- .gitignore
 |-- .python-version
 |-- pyproject.toml
@@ -131,28 +201,52 @@ negotia/
 `-- uv.lock
 ```
 
-Package marker files are omitted from the diagram for brevity.
+Package marker files are omitted for brevity.
 
 ## Local development
 
-Install [uv](https://docs.astral.sh/uv/), then run the following commands from the
+Install [uv](https://docs.astral.sh/uv/), then run these commands from the
 repository root:
 
 ```powershell
 uv python install 3.12
 uv sync --dev
+Copy-Item .env.example .env
 ```
 
-The application loads optional environment values from `.env` using UTF-8
-encoding. Supported settings and defaults are:
+The `.env` copy is optional when the defaults are suitable.
+
+## LLM provider configuration
+
+The application loads `.env` using UTF-8 encoding. The provider-related defaults
+in `.env.example` are:
+
+```dotenv
+LLM_PROVIDER=fake
+BEDROCK_MODEL_ID=amazon.nova-lite-v1:0
+AWS_REGION=us-east-1
+AWS_PROFILE=
+```
+
+- `fake` is the default and returns a deterministic response without making AWS
+  calls.
+- `bedrock` enables real generation through AWS Bedrock Runtime.
+- `BEDROCK_MODEL_ID` selects the Bedrock model used by the Converse request.
+- `AWS_REGION` is always supplied when creating the AWS session.
+- `AWS_PROFILE` is optional. When it is empty, boto3 uses the normal AWS
+  credential chain, including IAM roles on EC2. When set, the named local profile
+  is used.
+
+AWS credentials are not stored in this repository. Do not place access keys or
+secret keys in `.env.example`.
+
+Other supported settings are:
 
 | Environment variable | Default |
 | --- | --- |
 | `APP_NAME` | `Negotia API` |
 | `API_VERSION` | `0.1.0` |
 | `DEBUG` | `false` |
-
-No `.env` file is required for local development.
 
 ## Running the API
 
@@ -166,19 +260,24 @@ The API is available at `http://127.0.0.1:8000`.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/v1/health` | Reports whether the API service is healthy. |
+| `GET` | `/api/v1/health` | Report API health. |
+| `POST` | `/api/v1/scenarios` | Create a scenario. |
+| `GET` | `/api/v1/scenarios` | List scenarios. |
+| `GET` | `/api/v1/scenarios/{scenario_id}` | Retrieve a scenario. |
+| `POST` | `/api/v1/negotiations` | Create a negotiation session for an existing scenario. |
+| `GET` | `/api/v1/negotiations` | List negotiation sessions. |
+| `GET` | `/api/v1/negotiations/{session_id}` | Retrieve a negotiation session. |
+| `POST` | `/api/v1/turns` | Create a user or opponent turn for an existing session. |
+| `GET` | `/api/v1/turns/{turn_id}` | Retrieve a turn. |
+| `GET` | `/api/v1/negotiations/{session_id}/turns` | Retrieve ordered session history. |
+| `POST` | `/api/v1/negotiations/{session_id}/opponent-response` | Generate and store the next opponent turn. |
 
-Successful response:
+The opponent-response endpoint requires an existing user turn. It returns `409`
+when there is no user turn or when the latest turn already belongs to the
+opponent.
 
-```json
-{
-  "status": "healthy",
-  "service": "Negotia API"
-}
-```
-
-The unversioned `GET /health` path returns `404`, and
-`POST /api/v1/health` returns `405`. Error responses use this structure:
+The unversioned `GET /health` path returns `404`. Error responses use the
+application's consistent JSON envelope:
 
 ```json
 {
@@ -195,9 +294,8 @@ The unversioned `GET /health` path returns `404`, and
 uv run pytest
 ```
 
-The suite covers the health API, error responses, domain schemas, generated IDs
-and timestamps, in-memory repositories, service delegation, and negotiation
-scenario validation.
+The test suite uses the fake provider for API and service workflows and mocks AWS
+client creation in Bedrock-specific tests. It does not require live AWS access.
 
 ## Running code-quality checks
 
@@ -206,19 +304,38 @@ uv run ruff check .
 uv run ruff format --check .
 ```
 
+## Current limitations
+
+- Repositories are in memory, so all data is lost when the application restarts.
+- Authentication and authorization are not implemented.
+- Coach, debrief, strategy, long-term memory, and adaptive difficulty features are
+  not implemented.
+- Opponent quality depends on the selected provider, model, scenario data, and
+  prompt design.
+- The current backend does not include a web frontend or durable database.
+- Production deployment infrastructure is not yet included.
+
 ## Roadmap
 
-Future work may include:
+Completed:
 
-- Scenario and negotiation-session API routes
-- Durable PostgreSQL persistence
-- Realistic negotiation interactions with specialized AI agents
-- Structured feedback and personalized coaching
-- Evaluation and observability
-- A web frontend
-- Docker packaging and AWS deployment
+- [x] FastAPI application foundation and versioned API
+- [x] Scenario domain and API
+- [x] Negotiation-session domain and API
+- [x] Negotiation-turn domain and API
+- [x] LLM provider abstraction and deterministic fake provider
+- [x] AWS Bedrock provider and configuration-based provider selection
+- [x] Scenario-aware opponent prompt builder
+- [x] Opponent service and opponent-response API
 
-These items are product direction, not current functionality.
+Planned:
+
+- [ ] Richer multi-round opponent behavior
+- [ ] Coach, debrief, and strategy agents
+- [ ] Adaptive difficulty and long-term memory
+- [ ] Persistent database
+- [ ] Authentication and authorization
+- [ ] Web frontend and production deployment
 
 ## License status
 
