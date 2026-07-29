@@ -11,10 +11,10 @@ from app.domains.scenario.repository import ScenarioRepository
 class NegotiationService:
     def __init__(
         self,
-        repository: NegotiationRepository,
+        negotiation_repository: NegotiationRepository,
         scenario_repository: ScenarioRepository,
     ) -> None:
-        self._repository = repository
+        self._negotiation_repository = negotiation_repository
         self._scenario_repository = scenario_repository
 
     def create_session(
@@ -34,10 +34,10 @@ class NegotiationService:
             updated_at=now,
         )
 
-        return self._repository.create(session)
+        return self._negotiation_repository.create(session)
 
     def get_session(self, session_id: UUID) -> NegotiationSession | None:
-        return self._repository.get(session_id)
+        return self._negotiation_repository.get(session_id)
 
     def list_sessions(self) -> list[NegotiationSession]:
-        return self._repository.list()
+        return self._negotiation_repository.list()

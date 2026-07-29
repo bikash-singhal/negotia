@@ -1,109 +1,129 @@
 # Negotia
 
-> An Agentic AI platform for realistic negotiation practice and personalized coaching.
+> An agentic AI platform for realistic negotiation practice and personalized coaching.
 
-Negotia is being developed as an AI-assisted environment where people can practice
-realistic negotiation scenarios, interact with specialized AI agents, and receive
-structured feedback on their performance. The intended product will help users
-identify improvement areas and build negotiation skills through personalized
-coaching.
-
-## Why Negotia?
-
-Negotiation is one of the most valuable professional skills, yet realistic practice opportunities are limited. Negotia aims to provide an AI-powered environment where users can repeatedly practice challenging negotiation scenarios, receive objective feedback, and improve through personalized coaching.
-
-Beyond solving this problem, Negotia is also being developed as an AI engineering portfolio project intended to demonstrate modern agentic AI architecture, production-oriented backend design, and cloud-native deployment.
+Negotia is being developed as an environment for practicing negotiation scenarios
+and receiving structured, personalized coaching. The repository currently contains
+the backend and domain foundation only; negotiation APIs, AI agents, persistence,
+and a web interface are not implemented yet.
 
 ## Current status
 
-Negotia is in active development. The current milestone establishes the backend foundation on which future AI capabilities will be built.
+The current milestone provides:
 
-## Current functionality
+- A FastAPI application titled `Negotia API`, version `0.1.0`
+- Versioned API routing with `GET /api/v1/health`
+- Environment-based configuration through `pydantic-settings`
+- Standard-library console logging and application lifespan logs
+- Centralized JSON handlers for application, HTTP, validation, and unexpected errors
+- Scenario models, schemas, an in-memory repository, and a service
+- Negotiation-session models, schemas, an in-memory repository, and a service
+- Scenario-existence validation before negotiation-session creation
+- Automated API and domain-layer tests
+- uv dependency management and Ruff linting
 
-- FastAPI application titled `Negotia API`, version `0.1.0`
-- `GET /api/v1/health` service health check
-- Automated pytest coverage for the complete health-check response
-- Ruff linting
-- uv-based dependency management
+The Scenario and Negotiation domain services are not exposed through API routes.
+Their repositories store data in memory, so data does not survive process restarts.
 
-## Planned architecture
-
-The following diagram represents the planned high-level architecture. Except for
-the current FastAPI foundation, these components are not implemented yet.
+## Implemented architecture
 
 ```mermaid
 flowchart TD
-    Frontend["Frontend"] --> FastAPI["FastAPI"]
+    FastAPI["FastAPI application"] --> Health["Versioned health endpoint"]
+    FastAPI --> Errors["Centralized error handlers"]
+    FastAPI --> Config["Configuration and logging"]
 
-    FastAPI --> PostgreSQL["PostgreSQL"]
-
-    FastAPI --> LangGraph["LangGraph"]
-
-    LangGraph --> Bedrock["Amazon Bedrock"]
+    NegotiationService["NegotiationService"] --> NegotiationRepository["In-memory NegotiationRepository"]
+    NegotiationService --> ScenarioRepository["In-memory ScenarioRepository"]
+    ScenarioService["ScenarioService"] --> ScenarioRepository
 ```
+
+The domain services and repositories are currently tested directly and are not yet
+wired into FastAPI.
+
+## Domain model
+
+### Scenario
+
+A Scenario contains the negotiation setup, including its industry, opponent role,
+objective, difficulty, constraints, personality, negotiation style, private
+context, and walk-away conditions.
+
+`ScenarioResponse` intentionally excludes `hidden_context` and
+`walk_away_conditions`. `ScenarioInternalResponse` includes the complete domain
+state for trusted internal use.
+
+### Negotiation session
+
+A NegotiationSession references a Scenario by `scenario_id` and tracks its status
+and timestamps. `NegotiationService` verifies that the referenced Scenario exists
+before creating and storing a session. A missing Scenario raises the domain-level
+`ScenarioNotFoundError`.
 
 ## Technology stack
 
-### Backend
-
-**Current**
+### Current
 
 - Python 3.12+
-- FastAPI
-- Uvicorn
-- pydantic-settings
+- FastAPI and Uvicorn
+- Pydantic v2 and pydantic-settings
+- Python standard-library logging
+- pytest, FastAPI TestClient, and HTTPX
+- Ruff
+- uv
 
-## AI
-
-**Planned**
-
-- LangGraph
-- Amazon Bedrock
-
-## Data
-
-**Planned**
+### Planned
 
 - PostgreSQL
+- LangGraph
+- Amazon Bedrock
+- Evaluation and observability tooling
+- A web frontend
+- Docker and AWS deployment
 
-## Developer Experience
-
-**Current**
-
-- uv
-- pytest
-- Ruff
-
-## Infrastructure & Deployment
-
-**Planned**
-
-- Docker
-- AWS
+Planned technologies are not implemented in the current repository.
 
 ## Project structure
 
 ```text
 negotia/
 |-- app/
-|   |-- __init__.py
-|   |-- main.py
 |   |-- api/
-|   |   |-- __init__.py
 |   |   `-- v1/
-|   |       |-- __init__.py
 |   |       |-- health.py
 |   |       `-- router.py
-|   `-- core/
-|       |-- __init__.py
-|       `-- config.py
+|   |-- core/
+|   |   |-- config.py
+|   |   |-- exception_handlers.py
+|   |   |-- exceptions.py
+|   |   `-- logging_config.py
+|   |-- domains/
+|   |   |-- negotiation/
+|   |   |   |-- exceptions.py
+|   |   |   |-- models.py
+|   |   |   |-- repository.py
+|   |   |   |-- schemas.py
+|   |   |   `-- service.py
+|   |   `-- scenario/
+|   |       |-- models.py
+|   |       |-- repository.py
+|   |       |-- schemas.py
+|   |       `-- service.py
+|   `-- main.py
 |-- tests/
-|   |-- __init__.py
-|   `-- api/
-|       |-- __init__.py
-|       `-- v1/
-|           |-- __init__.py
-|           `-- test_health.py
+|   |-- api/
+|   |   `-- v1/
+|   |       `-- test_health.py
+|   `-- domains/
+|       |-- negotiation/
+|       |   |-- test_repository.py
+|       |   |-- test_schemas.py
+|       |   `-- test_service.py
+|       `-- scenario/
+|           |-- test_models.py
+|           |-- test_repository.py
+|           |-- test_schemas.py
+|           `-- test_service.py
 |-- .gitignore
 |-- .python-version
 |-- pyproject.toml
@@ -111,23 +131,36 @@ negotia/
 `-- uv.lock
 ```
 
-## Local development setup
+Package marker files are omitted from the diagram for brevity.
 
-Install [uv](https://docs.astral.sh/uv/) and run the following commands from the
-repository root in Windows PowerShell:
+## Local development
+
+Install [uv](https://docs.astral.sh/uv/), then run the following commands from the
+repository root:
 
 ```powershell
 uv python install 3.12
 uv sync --dev
 ```
 
-Start the development server:
+The application loads optional environment values from `.env` using UTF-8
+encoding. Supported settings and defaults are:
+
+| Environment variable | Default |
+| --- | --- |
+| `APP_NAME` | `Negotia API` |
+| `API_VERSION` | `0.1.0` |
+| `DEBUG` | `false` |
+
+No `.env` file is required for local development.
+
+## Running the API
 
 ```powershell
 uv run uvicorn app.main:app --reload
 ```
 
-The API will be available at `http://127.0.0.1:8000`.
+The API is available at `http://127.0.0.1:8000`.
 
 ## Available API endpoints
 
@@ -140,49 +173,52 @@ Successful response:
 ```json
 {
   "status": "healthy",
-  "service": "negotia-api"
+  "service": "Negotia API"
+}
+```
+
+The unversioned `GET /health` path returns `404`, and
+`POST /api/v1/health` returns `405`. Error responses use this structure:
+
+```json
+{
+  "error": {
+    "code": "not_found",
+    "message": "Not Found"
+  }
 }
 ```
 
 ## Running tests
 
-Run the automated test suite from Windows PowerShell:
-
 ```powershell
 uv run pytest
 ```
 
-The current tests verify that `GET /api/v1/health` returns HTTP `200` with exactly
-the documented JSON response and that the unversioned `GET /health` path returns
-HTTP `404`.
+The suite covers the health API, error responses, domain schemas, generated IDs
+and timestamps, in-memory repositories, service delegation, and negotiation
+scenario validation.
 
-## Running lint checks
-
-Run Ruff against the application and test code:
+## Running code-quality checks
 
 ```powershell
-uv run ruff check app tests
+uv run ruff check .
+uv run ruff format --check .
 ```
 
-## Product roadmap
+## Roadmap
 
-The planned product direction includes:
+Future work may include:
 
-- Realistic negotiation scenarios for guided practice
-- Specialized AI agents for negotiation interactions
+- Scenario and negotiation-session API routes
+- Durable PostgreSQL persistence
+- Realistic negotiation interactions with specialized AI agents
 - Structured feedback and personalized coaching
-- Performance reviews with clearly identified improvement areas
-- PostgreSQL-backed persistence
-- LangGraph-based agent workflows
-- Amazon Bedrock model integration
+- Evaluation and observability
 - A web frontend
-- Docker-based packaging and AWS deployment
+- Docker packaging and AWS deployment
 
-These roadmap items describe intended work and are not currently available.
-
-## AI engineering focus
-
-This project is intentionally designed to demonstrate practical AI engineering skills beyond prompt engineering. As development progresses, it will showcase agent orchestration, structured outputs, evaluation pipelines, backend architecture, cloud deployment, and production software engineering practices.
+These items are product direction, not current functionality.
 
 ## License status
 

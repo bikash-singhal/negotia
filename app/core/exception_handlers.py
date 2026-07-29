@@ -67,7 +67,7 @@ async def _handle_unexpected_exception(
     _request: Request,
     exc: Exception,
 ) -> JSONResponse:
-    logger.exception("Unexpected application error")
+    logger.exception("Unexpected application error", exc_info=exc)
 
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

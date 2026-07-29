@@ -10,7 +10,7 @@ class ScenarioDifficulty(StrEnum):
     ADVANCED = "advanced"
 
 
-def utc_now() -> datetime:
+def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
@@ -28,5 +28,5 @@ class Scenario:
     constraints: list[str] = field(default_factory=list)
     hidden_context: list[str] = field(default_factory=list)
     walk_away_conditions: list[str] = field(default_factory=list)
-    created_at: datetime = field(default_factory=utc_now)
-    updated_at: datetime = field(default_factory=utc_now)
+    created_at: datetime = field(default_factory=_utc_now)
+    updated_at: datetime = field(default_factory=_utc_now)
