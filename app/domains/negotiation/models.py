@@ -4,12 +4,6 @@ from enum import StrEnum
 from uuid import UUID
 
 
-class NegotiationDifficulty(StrEnum):
-    EASY = "easy"
-    MEDIUM = "medium"
-    HARD = "hard"
-
-
 class NegotiationStatus(StrEnum):
     CREATED = "created"
     ACTIVE = "active"
@@ -17,12 +11,10 @@ class NegotiationStatus(StrEnum):
     ABANDONED = "abandoned"
 
 
-@dataclass(frozen=True)
+@dataclass
 class NegotiationSession:
     id: UUID
-    title: str
-    scenario: str
-    difficulty: NegotiationDifficulty
+    scenario_id: UUID
     status: NegotiationStatus
     created_at: datetime
     updated_at: datetime
