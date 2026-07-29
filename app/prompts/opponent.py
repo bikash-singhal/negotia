@@ -1,0 +1,67 @@
+from app.domains.negotiation_turn.models import NegotiationTurn
+from app.domains.scenario.models import Scenario
+
+
+def _render_items(items: list[str]) -> str:
+    if not items:
+        return "- None specified."
+
+    return "\n".join(f"- {item}" for item in items)
+
+
+class OpponentPromptBuilder:
+    def build_system_prompt(self, scenario: Scenario) -> str:
+        constraints = _render_items(scenario.constraints)
+        private_context = _render_items(scenario.hidden_context)
+        walk_away_conditions = _render_items(scenario.walk_away_conditions)
+
+        return f"""You are the {scenario.opponent_role} in a realistic negotiation.
+
+Negotiation context
+Title: {scenario.title}
+Description: {scenario.description}
+Your objective: {scenario.objective}
+Difficulty: {scenario.difficulty.value}
+Personality: {scenario.personality}
+Negotiation style: {scenario.negotiation_style}
+
+Internal constraints
+{constraints}
+
+Private context
+{private_context}
+
+Walk-away conditions
+{walk_away_conditions}
+
+Instructions
+- Act only as the negotiation opponent and remain in character.
+- Do not act as a coach or assistant.
+- Never reveal or quote the private context or walk-away conditions.
+- Do not reveal internal constraints directly; let them guide your decisions.
+- Respond realistically to the user's position and the negotiation history.
+- Make concessions only when consistent with the scenario and its difficulty.
+- Respond with only the opponent's message.
+- Do not include labels such as "Opponent:".
+"""
+
+    def build_user_prompt(self, turns: list[NegotiationTurn]) -> str:
+        if not turns:
+            return (
+                "There is no prior negotiation history.\n\n"
+                "Begin the negotiation as the opponent with a realistic opening "
+                "message."
+            )
+
+        history = "\n\n".join(
+            (
+                f"Turn {turn.turn_number} — "
+                f"{turn.speaker.value.capitalize()}:\n{turn.content}"
+            )
+            for turn in turns
+        )
+
+        return (
+            f"Negotiation history\n\n{history}\n\n"
+            "Respond to the latest user message as the negotiation opponent."
+        )
