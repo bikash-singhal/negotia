@@ -82,7 +82,8 @@ async def _handle_unexpected_exception(
 
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(
-        AppException, _handle_app_exception  # pyright: ignore[reportArgumentType]
+        AppException,
+        _handle_app_exception,  # pyright: ignore[reportArgumentType]
     )
     app.add_exception_handler(
         StarletteHTTPException,
