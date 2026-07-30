@@ -12,12 +12,11 @@ Create scenario
 → submit user turn
 → generate AI opponent response
 → retrieve ordered conversation history
-→ explicitly complete the negotiation and receive a structured debrief
+→ explicitly complete the negotiation and receive a structured debrief and strategy
 ```
 
-Standalone Coach, debrief, and strategy APIs, Strategy integration with the
-completion workflow, memory, and adaptive-difficulty capabilities remain future
-work.
+Standalone Coach, debrief, and strategy APIs, memory, and adaptive-difficulty
+capabilities remain future work.
 
 ## Current status
 
@@ -32,9 +31,9 @@ The default fake provider makes local development and automated tests determinis
 and does not call AWS. The Bedrock provider is also implemented and can be selected
 through environment configuration. DebriefService synthesizes patterns from
 stored coach observations only when a client explicitly completes a negotiation.
-The completion response includes the persisted structured debrief. A standalone
-StrategyService can turn that persisted debrief into actionable recommendations,
-but it is not connected to completion or an API.
+StrategyService then turns that persisted debrief into actionable recommendations.
+The completion response includes both persisted artifacts. Neither artifact has a
+standalone API.
 
 ## Current functionality
 
@@ -45,7 +44,8 @@ but it is not connected to completion or an API.
 - Ordered turn history for each negotiation session
 - AI opponent-response generation
 - Explicit user-triggered negotiation completion
-- Idempotent completion responses with stable debrief identifiers and timestamps
+- Idempotent completion responses with stable debrief and strategy identifiers
+  and timestamps
 - Deterministic orchestration through NegotiationEngine
 - Validation that an opponent response follows a user turn
 - LLM-assisted structured negotiation-state extraction
@@ -168,6 +168,7 @@ flowchart TD
     Engine -->|"complete ordered history"| CoachService
     Engine -->|"validate ordered turns"| TurnService
     Engine -->|"retrieve or generate debrief"| DebriefService
+    Engine -->|"retrieve or generate strategy"| StrategyService
     Engine -->|"mark completed"| SessionService
 
     Config --> Factory
@@ -190,8 +191,8 @@ for completed exchanges. DebriefService reads only those stored observations and
 persists at most one synthesized debrief per session. NegotiationEngine invokes it
 only after an explicit completion request passes session and turn validation.
 StrategyService reads only a persisted NegotiationDebriefRecord and stores at most
-one strategy per session. It is not invoked by NegotiationEngine or exposed by an
-API.
+one strategy per session. NegotiationEngine invokes it after the debrief is
+available and before marking the session completed.
 
 ## End-to-end opponent workflow
 
@@ -225,9 +226,11 @@ API.
    an adjacent user-opponent exchange, and available coach observations.
 3. DebriefService reuses an existing debrief or generates one only from stored
    CoachObservationRecords.
-4. NegotiationService transitions `created` or `active` to `completed` and updates
+4. StrategyService reuses an existing strategy or generates one only from the
+   persisted debrief.
+5. NegotiationService transitions `created` or `active` to `completed` and updates
    `updated_at`, which is returned as `completed_at`.
-5. Repeated completion calls return the original timestamp and persisted debrief
+6. Repeated completion calls return the original timestamp, debrief, and strategy
    without revalidating turns or calling the LLM again.
 
 Illustrative conversation:
@@ -303,8 +306,8 @@ primary objective, expected outcome, prioritized actionable tactics, long-term
 skills, preparation checklist, avoidance guidance, and confidence. Each tactic
 contains concrete actions, example language, and a success indicator. Strategy
 does not receive turns, coach observations, scenarios, negotiation state, or
-session repositories. It is currently an internal standalone service and is not
-part of completion.
+session repositories. It is generated or reused during explicit completion and
+returned as a strongly typed part of the completion response.
 
 ## Technology stack
 
@@ -444,7 +447,7 @@ The API is available at `http://127.0.0.1:8000`.
 | `GET` | `/api/v1/turns/{turn_id}` | Retrieve a turn. |
 | `GET` | `/api/v1/negotiations/{session_id}/turns` | Retrieve ordered session history. |
 | `POST` | `/api/v1/negotiations/{session_id}/opponent-response` | Generate and store the next opponent turn. |
-| `POST` | `/api/v1/negotiations/{session_id}/complete` | Explicitly complete a negotiation and return its persisted debrief. |
+| `POST` | `/api/v1/negotiations/{session_id}/complete` | Explicitly complete a negotiation and return its persisted debrief and strategy. |
 
 The opponent-response endpoint requires an existing user turn. It returns `409`
 when there is no user turn or when the latest turn already belongs to the
@@ -491,11 +494,10 @@ uv run ruff format --check .
   or available through a retrieval endpoint.
 - Debriefs are persisted only in memory and are exposed only as part of the
   explicit completion response; no standalone retrieval endpoint exists.
-- In-memory repositories do not provide a transaction spanning debrief
-  persistence and session-status updates. A retry reuses a debrief persisted
-  before a failed status transition.
-- Strategies are persisted only in memory and have no API or completion-workflow
-  integration.
+- In-memory repositories do not provide a transaction spanning debrief and
+  strategy persistence and the session-status update. A retry reuses artifacts
+  persisted before a later completion step failed.
+- Strategies are persisted only in memory and have no standalone retrieval API.
 - Authentication and authorization are not implemented.
 - Long-term memory and adaptive difficulty are not implemented.
 - Opponent quality depends on the selected provider, model, scenario data, and
@@ -520,14 +522,14 @@ Completed:
 - [x] Structured debrief extraction and in-memory per-session persistence
 - [x] Deterministic NegotiationEngine orchestration layer
 - [x] Opponent service and opponent-response API
-- [x] Explicit, idempotent negotiation completion and debrief response
+- [x] Explicit, idempotent negotiation completion with debrief and strategy response
 - [x] Standalone structured Strategy extraction and in-memory persistence
+- [x] Strategy integration with negotiation completion
 
 Planned:
 
 - [ ] Richer multi-round opponent behavior
 - [ ] Standalone Coach, debrief, and strategy APIs
-- [ ] Strategy integration with negotiation completion
 - [ ] Adaptive difficulty and long-term memory
 - [ ] Persistent database
 - [ ] Authentication and authorization

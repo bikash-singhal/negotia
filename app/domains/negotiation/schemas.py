@@ -32,6 +32,29 @@ class NegotiationDebriefResponse(BaseModel):
     confidence: str
 
 
+class NegotiationTacticResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    priority: int
+    title: str
+    rationale: str
+    actions: list[str]
+    example_language: list[str]
+    success_indicator: str
+
+
+class NegotiationStrategyResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    primary_objective: str
+    expected_outcome: str
+    prioritized_tactics: list[NegotiationTacticResponse]
+    long_term_skills: list[str]
+    preparation_checklist: list[str]
+    avoid_next_time: list[str]
+    confidence: str
+
+
 class NegotiationCompletionResponse(BaseModel):
     session_id: UUID
     status: NegotiationStatus
@@ -40,3 +63,6 @@ class NegotiationCompletionResponse(BaseModel):
     observation_count: int
     debrief_id: UUID
     debrief_created_at: AwareDatetime
+    strategy: NegotiationStrategyResponse
+    strategy_id: UUID
+    strategy_created_at: AwareDatetime

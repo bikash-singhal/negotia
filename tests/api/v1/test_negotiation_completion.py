@@ -17,6 +17,7 @@ from app.domains.negotiation_turn.service import NegotiationTurnService
 from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.repository import ScenarioRepository
 from app.domains.scenario.service import ScenarioService
+from app.domains.strategy.repository import NegotiationStrategyRepository
 from app.llm.fake import FakeLLMProvider
 from app.llm.provider import LLMProvider
 from app.main import app
@@ -24,11 +25,13 @@ from app.prompts.coach import CoachPromptBuilder
 from app.prompts.debrief import DebriefPromptBuilder
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
+from app.prompts.strategy import StrategyPromptBuilder
 from app.services.coach import CoachObservationExtractor, CoachService
 from app.services.debrief import DebriefExtractor, DebriefService
 from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
+from app.services.strategy import StrategyExtractor, StrategyService
 
 
 @dataclass(frozen=True)
@@ -36,7 +39,9 @@ class CompletionContext:
     negotiation_repository: NegotiationRepository
     debrief_repository: NegotiationDebriefRepository
     debrief_service: DebriefService
-    debrief_provider: MagicMock
+    strategy_repository: NegotiationStrategyRepository
+    strategy_service: StrategyService
+    artifact_provider: MagicMock
 
 
 def _parse_uuid(value: object) -> UUID:
@@ -58,6 +63,7 @@ def completion_context() -> Iterator[CompletionContext]:
         app.state.opponent_service,
         app.state.coach_service,
         app.state.debrief_service,
+        app.state.strategy_service,
         app.state.negotiation_engine,
     )
     scenario_repository = ScenarioRepository()
@@ -65,8 +71,9 @@ def completion_context() -> Iterator[CompletionContext]:
     turn_repository = NegotiationTurnRepository()
     coach_repository = CoachObservationRepository()
     debrief_repository = NegotiationDebriefRepository()
+    strategy_repository = NegotiationStrategyRepository()
     fake_provider = FakeLLMProvider()
-    debrief_provider = MagicMock(spec=LLMProvider, wraps=FakeLLMProvider())
+    artifact_provider = MagicMock(spec=LLMProvider, wraps=FakeLLMProvider())
     negotiation_service = NegotiationService(
         negotiation_repository,
         scenario_repository,
@@ -86,9 +93,17 @@ def completion_context() -> Iterator[CompletionContext]:
         coach_repository,
         DebriefExtractor(
             DebriefPromptBuilder(),
-            debrief_provider,
+            artifact_provider,
         ),
         debrief_repository,
+    )
+    strategy_service = StrategyService(
+        debrief_repository,
+        StrategyExtractor(
+            StrategyPromptBuilder(),
+            artifact_provider,
+        ),
+        strategy_repository,
     )
     opponent_service = OpponentService(
         negotiation_repository,
@@ -108,19 +123,23 @@ def completion_context() -> Iterator[CompletionContext]:
     app.state.opponent_service = opponent_service
     app.state.coach_service = coach_service
     app.state.debrief_service = debrief_service
+    app.state.strategy_service = strategy_service
     app.state.negotiation_engine = NegotiationEngine(
         opponent_service,
         coach_service,
         negotiation_service,
         turn_service,
         debrief_service,
+        strategy_service,
     )
     try:
         yield CompletionContext(
             negotiation_repository=negotiation_repository,
             debrief_repository=debrief_repository,
             debrief_service=debrief_service,
-            debrief_provider=debrief_provider,
+            strategy_repository=strategy_repository,
+            strategy_service=strategy_service,
+            artifact_provider=artifact_provider,
         )
     finally:
         (
@@ -130,6 +149,7 @@ def completion_context() -> Iterator[CompletionContext]:
             app.state.opponent_service,
             app.state.coach_service,
             app.state.debrief_service,
+            app.state.strategy_service,
             app.state.negotiation_engine,
         ) = original_services
 
@@ -197,7 +217,40 @@ def _create_completed_exchange(client: TestClient) -> dict[str, object]:
     return session
 
 
-def test_complete_negotiation_returns_structured_debrief(
+def _expected_strategy() -> dict[str, object]:
+    return {
+        "primary_objective": "Make concessions conditional on reciprocal value.",
+        "expected_outcome": (
+            "Each concession advances the user toward a balanced agreement."
+        ),
+        "prioritized_tactics": [
+            {
+                "priority": 1,
+                "title": "Trade rather than concede",
+                "rationale": "Conditional trades protect value.",
+                "actions": ["Request reciprocal value for every concession."],
+                "example_language": [
+                    ("I can agree to that if you can improve the payment terms.")
+                ],
+                "success_indicator": ("Every concession receives reciprocal value."),
+            },
+            {
+                "priority": 2,
+                "title": "Prepare concession boundaries",
+                "rationale": "Defined boundaries prevent reactive concessions.",
+                "actions": ["Set concession limits before negotiating."],
+                "example_language": ["That is the furthest I can move on price."],
+                "success_indicator": "No unplanned concessions are made.",
+            },
+        ],
+        "long_term_skills": ["Concession planning"],
+        "preparation_checklist": ["Define reciprocal asks."],
+        "avoid_next_time": ["Do not concede without receiving value."],
+        "confidence": "low",
+    }
+
+
+def test_complete_negotiation_returns_structured_artifacts(
     client: TestClient,
 ) -> None:
     session = _create_completed_exchange(client)
@@ -214,12 +267,17 @@ def test_complete_negotiation_returns_structured_debrief(
         "observation_count",
         "debrief_id",
         "debrief_created_at",
+        "strategy",
+        "strategy_id",
+        "strategy_created_at",
     }
     assert body["session_id"] == session["id"]
     assert body["status"] == "completed"
     assert _parse_datetime(body["completed_at"]).utcoffset() == timedelta(0)
     assert _parse_datetime(body["debrief_created_at"]).utcoffset() == timedelta(0)
+    assert _parse_datetime(body["strategy_created_at"]).utcoffset() == timedelta(0)
     assert _parse_uuid(body["debrief_id"])
+    assert _parse_uuid(body["strategy_id"])
     assert body["observation_count"] == 1
     assert body["debrief"] == {
         "repeated_strengths": [],
@@ -231,6 +289,8 @@ def test_complete_negotiation_returns_structured_debrief(
         ),
         "confidence": "low",
     }
+    assert body["strategy"] == _expected_strategy()
+    assert "strategy_debrief_id" not in body
 
     session_response = client.get(f"/api/v1/negotiations/{session['id']}")
     assert session_response.status_code == 200
@@ -277,7 +337,7 @@ def test_abandoned_session_cannot_be_completed(
         "cannot transition from 'abandoned' to 'completed'"
         in (response.json()["error"]["message"])
     )
-    completion_context.debrief_provider.generate.assert_not_called()
+    completion_context.artifact_provider.generate.assert_not_called()
 
 
 def test_completion_with_latest_user_turn_returns_conflict(
@@ -339,7 +399,7 @@ def test_debrief_failure_does_not_complete_session(
     completion_context: CompletionContext,
 ) -> None:
     session = _create_completed_exchange(client)
-    completion_context.debrief_provider.generate.side_effect = RuntimeError(
+    completion_context.artifact_provider.generate.side_effect = RuntimeError(
         "Provider failed"
     )
 
@@ -376,17 +436,20 @@ def test_repeated_completion_is_idempotent(
     assert first_response.status_code == 200
     assert second_response.status_code == 200
     assert second_response.json() == first_body
-    assert completion_context.debrief_provider.generate.call_count == 1
+    assert completion_context.artifact_provider.generate.call_count == 2
     session_id = _parse_uuid(session["id"])
-    record = completion_context.debrief_repository.get_by_session(session_id)
-    assert record is not None
-    assert record.id == _parse_uuid(first_body["debrief_id"])
+    debrief_record = completion_context.debrief_repository.get_by_session(session_id)
+    strategy_record = completion_context.strategy_repository.get_by_session(session_id)
+    assert debrief_record is not None
+    assert strategy_record is not None
+    assert debrief_record.id == _parse_uuid(first_body["debrief_id"])
+    assert strategy_record.id == _parse_uuid(first_body["strategy_id"])
     persisted_session = completion_context.negotiation_repository.get(session_id)
     assert persisted_session is not None
     assert persisted_session.updated_at == _parse_datetime(first_body["completed_at"])
 
 
-def test_completion_reuses_existing_debrief_during_recovery(
+def test_completion_reuses_existing_debrief_and_generates_missing_strategy(
     client: TestClient,
     completion_context: CompletionContext,
 ) -> None:
@@ -395,21 +458,87 @@ def test_completion_reuses_existing_debrief_during_recovery(
     existing_record = completion_context.debrief_service.generate_for_session(
         session_id
     )
-    completion_context.debrief_provider.generate.reset_mock()
+    completion_context.artifact_provider.generate.reset_mock()
 
     response = client.post(f"/api/v1/negotiations/{session['id']}/complete")
     body = response.json()
 
     assert response.status_code == 200
     assert body["debrief_id"] == str(existing_record.id)
-    assert completion_context.debrief_provider.generate.call_count == 0
+    assert completion_context.artifact_provider.generate.call_count == 1
     assert (
         completion_context.debrief_repository.get_by_session(session_id)
         is existing_record
     )
+    strategy_record = completion_context.strategy_repository.get_by_session(session_id)
+    assert strategy_record is not None
+    assert body["strategy_id"] == str(strategy_record.id)
     persisted_session = completion_context.negotiation_repository.get(session_id)
     assert persisted_session is not None
     assert persisted_session.status is NegotiationStatus.COMPLETED
+
+
+def test_completion_reuses_existing_debrief_and_strategy_during_recovery(
+    client: TestClient,
+    completion_context: CompletionContext,
+) -> None:
+    session = _create_completed_exchange(client)
+    session_id = _parse_uuid(session["id"])
+    debrief_record = completion_context.debrief_service.generate_for_session(session_id)
+    strategy_record = completion_context.strategy_service.generate_for_session(
+        session_id
+    )
+    completion_context.artifact_provider.generate.reset_mock()
+
+    response = client.post(f"/api/v1/negotiations/{session['id']}/complete")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["debrief_id"] == str(debrief_record.id)
+    assert body["strategy_id"] == str(strategy_record.id)
+    completion_context.artifact_provider.generate.assert_not_called()
+    assert (
+        completion_context.debrief_repository.get_by_session(session_id)
+        is debrief_record
+    )
+    assert (
+        completion_context.strategy_repository.get_by_session(session_id)
+        is strategy_record
+    )
+    persisted_session = completion_context.negotiation_repository.get(session_id)
+    assert persisted_session is not None
+    assert persisted_session.status is NegotiationStatus.COMPLETED
+
+
+def test_strategy_failure_does_not_complete_session(
+    client: TestClient,
+    completion_context: CompletionContext,
+) -> None:
+    session = _create_completed_exchange(client)
+    session_id = _parse_uuid(session["id"])
+    debrief_record = completion_context.debrief_service.generate_for_session(session_id)
+    completion_context.artifact_provider.generate.reset_mock()
+    completion_context.artifact_provider.generate.side_effect = RuntimeError(
+        "Strategy provider failed"
+    )
+
+    response = client.post(f"/api/v1/negotiations/{session['id']}/complete")
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "error": {
+            "code": "internal_server_error",
+            "message": "An unexpected error occurred",
+        }
+    }
+    persisted_session = completion_context.negotiation_repository.get(session_id)
+    assert persisted_session is not None
+    assert persisted_session.status is NegotiationStatus.CREATED
+    assert (
+        completion_context.debrief_repository.get_by_session(session_id)
+        is debrief_record
+    )
+    assert completion_context.strategy_repository.get_by_session(session_id) is None
 
 
 def test_completed_session_without_debrief_returns_safe_internal_error(
@@ -432,3 +561,28 @@ def test_completed_session_without_debrief_returns_safe_internal_error(
             "message": "An unexpected error occurred",
         }
     }
+
+
+def test_completed_session_without_strategy_returns_safe_internal_error(
+    client: TestClient,
+    completion_context: CompletionContext,
+) -> None:
+    session = _create_completed_exchange(client)
+    session_id = _parse_uuid(session["id"])
+    completion_context.debrief_service.generate_for_session(session_id)
+    completion_context.artifact_provider.generate.reset_mock()
+    stored_session = completion_context.negotiation_repository.get(session_id)
+    assert stored_session is not None
+    stored_session.status = NegotiationStatus.COMPLETED
+
+    response = client.post(f"/api/v1/negotiations/{session['id']}/complete")
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "error": {
+            "code": "internal_server_error",
+            "message": "An unexpected error occurred",
+        }
+    }
+    completion_context.artifact_provider.generate.assert_not_called()
+    assert completion_context.strategy_repository.get_by_session(session_id) is None

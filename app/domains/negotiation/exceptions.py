@@ -57,3 +57,11 @@ class CompletedNegotiationMissingDebriefError(Exception):
         super().__init__(
             f"Completed negotiation session '{session_id}' is missing its debrief."
         )
+
+
+class CompletedNegotiationMissingStrategyError(Exception):
+    def __init__(self, session_id: UUID) -> None:
+        self.session_id = session_id
+        super().__init__(
+            f"Completed negotiation session '{session_id}' is missing its strategy."
+        )

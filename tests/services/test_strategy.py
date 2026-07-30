@@ -332,3 +332,28 @@ def test_strategy_service_has_only_confirmed_dependencies() -> None:
         "extractor",
         "strategy_repository",
     ]
+
+
+def test_get_for_session_delegates_to_strategy_repository() -> None:
+    session_id = uuid4()
+    debrief_repository = MagicMock(spec=NegotiationDebriefRepository)
+    extractor = MagicMock(spec=StrategyExtractor)
+    strategy_repository = MagicMock(spec=NegotiationStrategyRepository)
+    expected_record = NegotiationStrategyRecord(
+        id=uuid4(),
+        session_id=session_id,
+        debrief_id=uuid4(),
+        strategy=_valid_strategy(),
+        created_at=datetime.now(UTC),
+    )
+    strategy_repository.get_by_session.return_value = expected_record
+    service = StrategyService(
+        debrief_repository,
+        extractor,
+        strategy_repository,
+    )
+
+    result = service.get_for_session(session_id)
+
+    assert result is expected_record
+    strategy_repository.get_by_session.assert_called_once_with(session_id)

@@ -17,6 +17,7 @@ from app.domains.negotiation.schemas import (
     NegotiationDebriefResponse,
     NegotiationSessionCreate,
     NegotiationSessionResponse,
+    NegotiationStrategyResponse,
 )
 from app.domains.negotiation.service import NegotiationService
 from app.domains.negotiation_turn.exceptions import (
@@ -59,15 +60,19 @@ def complete_negotiation(
             detail=str(exc),
         ) from None
 
-    record = result.debrief_record
+    debrief_record = result.debrief_record
+    strategy_record = result.strategy_record
     return NegotiationCompletionResponse(
         session_id=result.session.id,
         status=result.session.status,
         completed_at=result.session.updated_at,
-        debrief=NegotiationDebriefResponse.model_validate(record.debrief),
-        observation_count=record.observation_count,
-        debrief_id=record.id,
-        debrief_created_at=record.created_at,
+        debrief=NegotiationDebriefResponse.model_validate(debrief_record.debrief),
+        observation_count=debrief_record.observation_count,
+        debrief_id=debrief_record.id,
+        debrief_created_at=debrief_record.created_at,
+        strategy=NegotiationStrategyResponse.model_validate(strategy_record.strategy),
+        strategy_id=strategy_record.id,
+        strategy_created_at=strategy_record.created_at,
     )
 
 

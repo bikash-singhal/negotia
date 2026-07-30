@@ -64,7 +64,7 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert strategy_service._strategy_repository is strategy_repository
     assert app.state.strategy_service is strategy_service
     assert not hasattr(app.state, "strategy_repository")
-    assert not hasattr(negotiation_engine, "_strategy_service")
+    assert negotiation_engine._strategy_service is strategy_service
 
 
 def test_app_has_no_debrief_endpoint() -> None:

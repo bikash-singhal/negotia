@@ -12,6 +12,7 @@ from app.domains.debrief.models import (
 )
 from app.domains.negotiation.exceptions import (
     CompletedNegotiationMissingDebriefError,
+    CompletedNegotiationMissingStrategyError,
     NegotiationCompletionLatestTurnFromUserError,
     NegotiationCompletionRequiresExchangeError,
     NegotiationCompletionWithoutTurnsError,
@@ -23,6 +24,10 @@ from app.domains.negotiation_turn.models import (
     NegotiationTurnSpeaker,
 )
 from app.domains.negotiation_turn.service import NegotiationTurnService
+from app.domains.strategy.models import (
+    NegotiationStrategy,
+    NegotiationStrategyRecord,
+)
 from app.services.coach import CoachService
 from app.services.debrief import DebriefService
 from app.services.negotiation_engine import (
@@ -30,6 +35,7 @@ from app.services.negotiation_engine import (
     NegotiationEngine,
 )
 from app.services.opponent import OpponentResponseResult, OpponentService
+from app.services.strategy import StrategyService
 
 
 def _create_turn(
@@ -58,6 +64,7 @@ def _build_engine(
         MagicMock(spec=NegotiationService),
         MagicMock(spec=NegotiationTurnService),
         MagicMock(spec=DebriefService),
+        MagicMock(spec=StrategyService),
     )
 
 
@@ -91,11 +98,33 @@ def _create_debrief_record(session_id: UUID) -> NegotiationDebriefRecord:
     )
 
 
+def _create_strategy_record(
+    session_id: UUID,
+    debrief_id: UUID,
+) -> NegotiationStrategyRecord:
+    return NegotiationStrategyRecord(
+        id=uuid4(),
+        session_id=session_id,
+        debrief_id=debrief_id,
+        strategy=NegotiationStrategy(
+            primary_objective="Make every concession conditional.",
+            expected_outcome="Every concession receives reciprocal value.",
+            prioritized_tactics=[],
+            long_term_skills=[],
+            preparation_checklist=[],
+            avoid_next_time=[],
+            confidence="high",
+        ),
+        created_at=datetime.now(UTC),
+    )
+
+
 def _build_completion_engine(
     session: NegotiationSession,
     turns: list[NegotiationTurn],
 ) -> tuple[
     NegotiationEngine,
+    MagicMock,
     MagicMock,
     MagicMock,
     MagicMock,
@@ -106,14 +135,22 @@ def _build_completion_engine(
     turn_service = MagicMock(spec=NegotiationTurnService)
     turn_service.list_turns.return_value = turns
     debrief_service = MagicMock(spec=DebriefService)
+    strategy_service = MagicMock(spec=StrategyService)
     engine = NegotiationEngine(
         MagicMock(spec=OpponentService),
         MagicMock(spec=CoachService),
         negotiation_service,
         turn_service,
         debrief_service,
+        strategy_service,
     )
-    return engine, negotiation_service, turn_service, debrief_service
+    return (
+        engine,
+        negotiation_service,
+        turn_service,
+        debrief_service,
+        strategy_service,
+    )
 
 
 def test_engine_delegates_to_opponent_service_and_returns_response() -> None:
@@ -287,9 +324,7 @@ def test_negotiation_engine_has_no_repository_dependency() -> None:
     assert not any("repository" in name for name in parameters)
 
 
-def test_completion_validates_turns_then_generates_debrief_then_marks_completed() -> (
-    None
-):
+def test_completion_persists_debrief_then_strategy_then_marks_completed() -> None:
     session = _create_session()
     user_turn = _create_turn(
         session.id,
@@ -303,10 +338,15 @@ def test_completion_validates_turns_then_generates_debrief_then_marks_completed(
         NegotiationTurnSpeaker.OPPONENT,
         "That could support a discount.",
     )
-    engine, negotiation_service, turn_service, debrief_service = (
-        _build_completion_engine(session, [user_turn, opponent_turn])
-    )
-    record = _create_debrief_record(session.id)
+    (
+        engine,
+        negotiation_service,
+        turn_service,
+        debrief_service,
+        strategy_service,
+    ) = _build_completion_engine(session, [user_turn, opponent_turn])
+    debrief_record = _create_debrief_record(session.id)
+    strategy_record = _create_strategy_record(session.id, debrief_record.id)
     call_order: list[str] = []
     negotiation_service.validate_completion_transition.side_effect = (
         lambda received_id: call_order.append("session") or session
@@ -318,7 +358,13 @@ def test_completion_validates_turns_then_generates_debrief_then_marks_completed(
         call_order.append("debrief lookup") or None
     )
     debrief_service.generate_for_session.side_effect = lambda received_id: (
-        call_order.append("debrief generation") or record
+        call_order.append("debrief generation") or debrief_record
+    )
+    strategy_service.get_for_session.side_effect = lambda received_id: (
+        call_order.append("strategy lookup") or None
+    )
+    strategy_service.generate_for_session.side_effect = lambda received_id: (
+        call_order.append("strategy generation") or strategy_record
     )
 
     def mark_completed(received_id: UUID) -> NegotiationSession:
@@ -332,12 +378,15 @@ def test_completion_validates_turns_then_generates_debrief_then_marks_completed(
 
     assert isinstance(result, NegotiationCompletionResult)
     assert result.session is session
-    assert result.debrief_record is record
+    assert result.debrief_record is debrief_record
+    assert result.strategy_record is strategy_record
     assert call_order == [
         "session",
         "turns",
         "debrief lookup",
         "debrief generation",
+        "strategy lookup",
+        "strategy generation",
         "completion",
     ]
     negotiation_service.validate_completion_transition.assert_called_once_with(
@@ -346,21 +395,28 @@ def test_completion_validates_turns_then_generates_debrief_then_marks_completed(
     turn_service.list_turns.assert_called_once_with(session.id)
     debrief_service.get_for_session.assert_called_once_with(session.id)
     debrief_service.generate_for_session.assert_called_once_with(session.id)
+    strategy_service.get_for_session.assert_called_once_with(session.id)
+    strategy_service.generate_for_session.assert_called_once_with(session.id)
     negotiation_service.mark_completed.assert_called_once_with(session.id)
 
 
 def test_completion_rejects_session_without_turns_before_debrief() -> None:
     session = _create_session()
-    engine, negotiation_service, _, debrief_service = _build_completion_engine(
-        session,
-        [],
-    )
+    (
+        engine,
+        negotiation_service,
+        _,
+        debrief_service,
+        strategy_service,
+    ) = _build_completion_engine(session, [])
 
     with pytest.raises(NegotiationCompletionWithoutTurnsError):
         engine.complete_session(session.id)
 
     debrief_service.get_for_session.assert_not_called()
     debrief_service.generate_for_session.assert_not_called()
+    strategy_service.get_for_session.assert_not_called()
+    strategy_service.generate_for_session.assert_not_called()
     negotiation_service.mark_completed.assert_not_called()
 
 
@@ -372,16 +428,21 @@ def test_completion_rejects_latest_user_turn_before_debrief() -> None:
         NegotiationTurnSpeaker.USER,
         "We need a lower price.",
     )
-    engine, negotiation_service, _, debrief_service = _build_completion_engine(
-        session,
-        [user_turn],
-    )
+    (
+        engine,
+        negotiation_service,
+        _,
+        debrief_service,
+        strategy_service,
+    ) = _build_completion_engine(session, [user_turn])
 
     with pytest.raises(NegotiationCompletionLatestTurnFromUserError):
         engine.complete_session(session.id)
 
     debrief_service.get_for_session.assert_not_called()
     debrief_service.generate_for_session.assert_not_called()
+    strategy_service.get_for_session.assert_not_called()
+    strategy_service.generate_for_session.assert_not_called()
     negotiation_service.mark_completed.assert_not_called()
 
 
@@ -399,7 +460,13 @@ def test_completion_requires_adjacent_user_opponent_exchange() -> None:
         NegotiationTurnSpeaker.OPPONENT,
         "Our position is unchanged.",
     )
-    engine, negotiation_service, _, debrief_service = _build_completion_engine(
+    (
+        engine,
+        negotiation_service,
+        _,
+        debrief_service,
+        strategy_service,
+    ) = _build_completion_engine(
         session,
         [first_opponent_turn, second_opponent_turn],
     )
@@ -408,6 +475,7 @@ def test_completion_requires_adjacent_user_opponent_exchange() -> None:
         engine.complete_session(session.id)
 
     debrief_service.generate_for_session.assert_not_called()
+    strategy_service.generate_for_session.assert_not_called()
     negotiation_service.mark_completed.assert_not_called()
 
 
@@ -427,10 +495,13 @@ def test_completion_does_not_mark_session_when_debrief_generation_fails() -> Non
             "We can discuss a smaller adjustment.",
         ),
     ]
-    engine, negotiation_service, _, debrief_service = _build_completion_engine(
-        session,
-        turns,
-    )
+    (
+        engine,
+        negotiation_service,
+        _,
+        debrief_service,
+        strategy_service,
+    ) = _build_completion_engine(session, turns)
     expected_error = NoCoachObservationsError()
     debrief_service.get_for_session.return_value = None
     debrief_service.generate_for_session.side_effect = expected_error
@@ -439,6 +510,8 @@ def test_completion_does_not_mark_session_when_debrief_generation_fails() -> Non
         engine.complete_session(session.id)
 
     assert exc_info.value is expected_error
+    strategy_service.get_for_session.assert_not_called()
+    strategy_service.generate_for_session.assert_not_called()
     negotiation_service.mark_completed.assert_not_called()
 
 
@@ -458,50 +531,150 @@ def test_completion_reuses_existing_debrief_for_recovery() -> None:
             "We can discuss a smaller adjustment.",
         ),
     ]
-    engine, negotiation_service, _, debrief_service = _build_completion_engine(
-        session,
-        turns,
-    )
-    record = _create_debrief_record(session.id)
-    debrief_service.get_for_session.return_value = record
+    (
+        engine,
+        negotiation_service,
+        _,
+        debrief_service,
+        strategy_service,
+    ) = _build_completion_engine(session, turns)
+    debrief_record = _create_debrief_record(session.id)
+    strategy_record = _create_strategy_record(session.id, debrief_record.id)
+    debrief_service.get_for_session.return_value = debrief_record
+    strategy_service.get_for_session.return_value = None
+    strategy_service.generate_for_session.return_value = strategy_record
     negotiation_service.mark_completed.side_effect = lambda _session_id: (
         setattr(session, "status", NegotiationStatus.COMPLETED) or session
     )
 
     result = engine.complete_session(session.id)
 
-    assert result.debrief_record is record
+    assert result.debrief_record is debrief_record
+    assert result.strategy_record is strategy_record
     assert result.session.status is NegotiationStatus.COMPLETED
     debrief_service.generate_for_session.assert_not_called()
+    strategy_service.generate_for_session.assert_called_once_with(session.id)
+    negotiation_service.mark_completed.assert_called_once_with(session.id)
+
+
+def test_completion_does_not_mark_session_when_strategy_generation_fails() -> None:
+    session = _create_session()
+    turns = [
+        _create_turn(
+            session.id,
+            1,
+            NegotiationTurnSpeaker.USER,
+            "We need a lower price.",
+        ),
+        _create_turn(
+            session.id,
+            2,
+            NegotiationTurnSpeaker.OPPONENT,
+            "We can discuss a smaller adjustment.",
+        ),
+    ]
+    (
+        engine,
+        negotiation_service,
+        _,
+        debrief_service,
+        strategy_service,
+    ) = _build_completion_engine(session, turns)
+    debrief_record = _create_debrief_record(session.id)
+    debrief_service.get_for_session.return_value = None
+    debrief_service.generate_for_session.return_value = debrief_record
+    strategy_service.get_for_session.return_value = None
+    expected_error = RuntimeError("Strategy provider failed")
+    strategy_service.generate_for_session.side_effect = expected_error
+
+    with pytest.raises(RuntimeError) as exc_info:
+        engine.complete_session(session.id)
+
+    assert exc_info.value is expected_error
+    debrief_service.generate_for_session.assert_called_once_with(session.id)
+    negotiation_service.mark_completed.assert_not_called()
+
+
+def test_completion_reuses_existing_debrief_and_strategy_for_recovery() -> None:
+    session = _create_session()
+    turns = [
+        _create_turn(
+            session.id,
+            1,
+            NegotiationTurnSpeaker.USER,
+            "We need a lower price.",
+        ),
+        _create_turn(
+            session.id,
+            2,
+            NegotiationTurnSpeaker.OPPONENT,
+            "We can discuss a smaller adjustment.",
+        ),
+    ]
+    (
+        engine,
+        negotiation_service,
+        _,
+        debrief_service,
+        strategy_service,
+    ) = _build_completion_engine(session, turns)
+    debrief_record = _create_debrief_record(session.id)
+    strategy_record = _create_strategy_record(session.id, debrief_record.id)
+    debrief_service.get_for_session.return_value = debrief_record
+    strategy_service.get_for_session.return_value = strategy_record
+    negotiation_service.mark_completed.side_effect = lambda _session_id: (
+        setattr(session, "status", NegotiationStatus.COMPLETED) or session
+    )
+
+    result = engine.complete_session(session.id)
+
+    assert result.debrief_record is debrief_record
+    assert result.strategy_record is strategy_record
+    assert result.session.status is NegotiationStatus.COMPLETED
+    debrief_service.generate_for_session.assert_not_called()
+    strategy_service.generate_for_session.assert_not_called()
     negotiation_service.mark_completed.assert_called_once_with(session.id)
 
 
 def test_completed_session_returns_original_result_without_revalidation() -> None:
     session = _create_session(NegotiationStatus.COMPLETED)
     original_updated_at = session.updated_at
-    engine, negotiation_service, turn_service, debrief_service = (
-        _build_completion_engine(session, [])
-    )
-    record = _create_debrief_record(session.id)
-    debrief_service.get_for_session.return_value = record
+    (
+        engine,
+        negotiation_service,
+        turn_service,
+        debrief_service,
+        strategy_service,
+    ) = _build_completion_engine(session, [])
+    debrief_record = _create_debrief_record(session.id)
+    strategy_record = _create_strategy_record(session.id, debrief_record.id)
+    debrief_service.get_for_session.return_value = debrief_record
+    strategy_service.get_for_session.return_value = strategy_record
 
     first = engine.complete_session(session.id)
     second = engine.complete_session(session.id)
 
     assert first.session is second.session is session
-    assert first.debrief_record is second.debrief_record is record
+    assert first.debrief_record is second.debrief_record is debrief_record
+    assert first.strategy_record is second.strategy_record is strategy_record
     assert session.updated_at is original_updated_at
     assert debrief_service.get_for_session.call_count == 2
+    assert strategy_service.get_for_session.call_count == 2
     turn_service.list_turns.assert_not_called()
     debrief_service.generate_for_session.assert_not_called()
+    strategy_service.generate_for_session.assert_not_called()
     negotiation_service.mark_completed.assert_not_called()
 
 
 def test_completed_session_without_debrief_raises_consistency_error() -> None:
     session = _create_session(NegotiationStatus.COMPLETED)
-    engine, negotiation_service, turn_service, debrief_service = (
-        _build_completion_engine(session, [])
-    )
+    (
+        engine,
+        negotiation_service,
+        turn_service,
+        debrief_service,
+        strategy_service,
+    ) = _build_completion_engine(session, [])
     debrief_service.get_for_session.return_value = None
 
     with pytest.raises(CompletedNegotiationMissingDebriefError) as exc_info:
@@ -510,4 +683,28 @@ def test_completed_session_without_debrief_raises_consistency_error() -> None:
     assert exc_info.value.session_id == session.id
     turn_service.list_turns.assert_not_called()
     debrief_service.generate_for_session.assert_not_called()
+    strategy_service.get_for_session.assert_not_called()
+    strategy_service.generate_for_session.assert_not_called()
+    negotiation_service.mark_completed.assert_not_called()
+
+
+def test_completed_session_without_strategy_raises_consistency_error() -> None:
+    session = _create_session(NegotiationStatus.COMPLETED)
+    (
+        engine,
+        negotiation_service,
+        turn_service,
+        debrief_service,
+        strategy_service,
+    ) = _build_completion_engine(session, [])
+    debrief_service.get_for_session.return_value = _create_debrief_record(session.id)
+    strategy_service.get_for_session.return_value = None
+
+    with pytest.raises(CompletedNegotiationMissingStrategyError) as exc_info:
+        engine.complete_session(session.id)
+
+    assert exc_info.value.session_id == session.id
+    turn_service.list_turns.assert_not_called()
+    debrief_service.generate_for_session.assert_not_called()
+    strategy_service.generate_for_session.assert_not_called()
     negotiation_service.mark_completed.assert_not_called()
