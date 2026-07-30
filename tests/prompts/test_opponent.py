@@ -5,24 +5,32 @@ from app.domains.negotiation_turn.models import (
     NegotiationTurn,
     NegotiationTurnSpeaker,
 )
+from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.models import Scenario, ScenarioDifficulty
 from app.prompts.opponent import OpponentPromptBuilder
 
 
-def _create_scenario() -> Scenario:
+def _create_scenario(
+    difficulty: ScenarioDifficulty = ScenarioDifficulty.ADVANCED,
+) -> Scenario:
     return Scenario(
         title="Enterprise software renewal",
         description="Negotiate the renewal of a multi-year software agreement.",
         industry="Technology",
         opponent_role="Vendor account executive",
         objective="Secure a three-year renewal at the current annual price.",
-        difficulty=ScenarioDifficulty.ADVANCED,
+        difficulty=difficulty,
         constraints=["Discount authority is limited to five percent."],
         personality="Confident and detail-oriented",
         negotiation_style="Competitive but pragmatic",
         hidden_context=["The vendor needs this deal to meet its quarterly target."],
         walk_away_conditions=["No agreement below the current annual contract value."],
     )
+
+
+def _build_system_prompt(scenario: Scenario) -> str:
+    profile = OpponentProfileBuilder().build(scenario.difficulty)
+    return OpponentPromptBuilder().build_system_prompt(scenario, profile)
 
 
 def _create_turn(
@@ -45,7 +53,7 @@ def _create_turn(
 def test_system_prompt_includes_scenario_context() -> None:
     scenario = _create_scenario()
 
-    prompt = OpponentPromptBuilder().build_system_prompt(scenario)
+    prompt = _build_system_prompt(scenario)
 
     assert scenario.opponent_role in prompt
     assert scenario.objective in prompt
@@ -58,7 +66,7 @@ def test_system_prompt_includes_scenario_context() -> None:
 
 
 def test_system_prompt_protects_private_information() -> None:
-    prompt = OpponentPromptBuilder().build_system_prompt(_create_scenario())
+    prompt = _build_system_prompt(_create_scenario())
 
     assert "Never reveal or quote the private context" in prompt
     assert "walk-away conditions" in prompt
@@ -66,7 +74,7 @@ def test_system_prompt_protects_private_information() -> None:
 
 
 def test_system_prompt_defines_opponent_behavior() -> None:
-    prompt = OpponentPromptBuilder().build_system_prompt(_create_scenario())
+    prompt = _build_system_prompt(_create_scenario())
 
     assert "Act only as the negotiation opponent" in prompt
     assert "remain in character" in prompt
@@ -78,10 +86,32 @@ def test_system_prompt_defines_opponent_behavior() -> None:
 def test_system_prompt_is_deterministic() -> None:
     scenario = _create_scenario()
     builder = OpponentPromptBuilder()
+    profile = OpponentProfileBuilder().build(scenario.difficulty)
 
-    assert builder.build_system_prompt(scenario) == builder.build_system_prompt(
-        scenario
+    assert builder.build_system_prompt(
+        scenario,
+        profile,
+    ) == builder.build_system_prompt(
+        scenario,
+        profile,
     )
+
+
+def test_difficulty_profiles_produce_distinct_behavioral_instructions() -> None:
+    prompts = {
+        difficulty: _build_system_prompt(_create_scenario(difficulty))
+        for difficulty in ScenarioDifficulty
+    }
+
+    assert len(set(prompts.values())) == 3
+    assert "Low - engage openly" in prompts[ScenarioDifficulty.BEGINNER]
+    assert (
+        "Moderate - question weak assumptions"
+        in prompts[ScenarioDifficulty.INTERMEDIATE]
+    )
+    assert "High - test proposals rigorously" in prompts[ScenarioDifficulty.ADVANCED]
+    assert "High but professional" in prompts[ScenarioDifficulty.ADVANCED]
+    assert "must never become rude, hostile" in prompts[ScenarioDifficulty.ADVANCED]
 
 
 def test_user_prompt_renders_one_user_turn() -> None:

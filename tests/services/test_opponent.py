@@ -21,6 +21,7 @@ from app.domains.negotiation_turn.models import (
     NegotiationTurnSpeaker,
 )
 from app.domains.negotiation_turn.repository import NegotiationTurnRepository
+from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.models import Scenario, ScenarioDifficulty
 from app.domains.scenario.repository import ScenarioRepository
 from app.llm.fake import FakeLLMProvider
@@ -102,6 +103,7 @@ def test_generate_response_creates_and_persists_opponent_turn() -> None:
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        OpponentProfileBuilder(),
         OpponentPromptBuilder(),
         FakeLLMProvider(),
     )
@@ -144,12 +146,16 @@ def test_generate_response_builds_prompts_and_strips_content() -> None:
     prompt_builder = MagicMock(spec=OpponentPromptBuilder)
     prompt_builder.build_system_prompt.return_value = "system prompt"
     prompt_builder.build_user_prompt.return_value = "user prompt"
+    expected_profile = OpponentProfileBuilder().build(scenario.difficulty)
+    profile_builder = MagicMock(spec=OpponentProfileBuilder)
+    profile_builder.build.return_value = expected_profile
     llm_provider = MagicMock(spec=LLMProvider)
     llm_provider.generate.return_value = "  Generated opponent response.  "
     service = OpponentService(
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        profile_builder,
         prompt_builder,
         llm_provider,
     )
@@ -158,7 +164,11 @@ def test_generate_response_builds_prompts_and_strips_content() -> None:
 
     assert turn.content == "Generated opponent response."
     assert turn.turn_number == 4
-    prompt_builder.build_system_prompt.assert_called_once_with(scenario)
+    profile_builder.build.assert_called_once_with(scenario.difficulty)
+    prompt_builder.build_system_prompt.assert_called_once_with(
+        scenario,
+        expected_profile,
+    )
     prompt_builder.build_user_prompt.assert_called_once_with(turns)
     llm_provider.generate.assert_called_once_with(
         system_prompt="system prompt",
@@ -178,6 +188,7 @@ def test_missing_session_stops_before_other_dependencies() -> None:
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        OpponentProfileBuilder(),
         prompt_builder,
         llm_provider,
     )
@@ -214,6 +225,7 @@ def test_missing_scenario_stops_before_turns_and_provider() -> None:
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        OpponentProfileBuilder(),
         prompt_builder,
         llm_provider,
     )
@@ -240,6 +252,7 @@ def test_empty_history_does_not_call_provider() -> None:
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        OpponentProfileBuilder(),
         MagicMock(spec=OpponentPromptBuilder),
         llm_provider,
     )
@@ -271,6 +284,7 @@ def test_latest_opponent_turn_does_not_call_provider() -> None:
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        OpponentProfileBuilder(),
         MagicMock(spec=OpponentPromptBuilder),
         llm_provider,
     )
@@ -303,6 +317,7 @@ def test_empty_generated_content_is_not_persisted(
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        OpponentProfileBuilder(),
         OpponentPromptBuilder(),
         llm_provider,
     )
@@ -327,6 +342,7 @@ def test_provider_exception_propagates_without_persisting_turn() -> None:
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        OpponentProfileBuilder(),
         OpponentPromptBuilder(),
         llm_provider,
     )
@@ -370,6 +386,7 @@ def test_generation_uses_only_requested_session_history() -> None:
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        OpponentProfileBuilder(),
         prompt_builder,
         llm_provider,
     )

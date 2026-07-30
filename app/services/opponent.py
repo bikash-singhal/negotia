@@ -14,6 +14,7 @@ from app.domains.negotiation_turn.models import (
     NegotiationTurnSpeaker,
 )
 from app.domains.negotiation_turn.repository import NegotiationTurnRepository
+from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.repository import ScenarioRepository
 from app.llm.provider import LLMProvider
 from app.prompts.opponent import OpponentPromptBuilder
@@ -25,12 +26,14 @@ class OpponentService:
         negotiation_repository: NegotiationRepository,
         scenario_repository: ScenarioRepository,
         turn_repository: NegotiationTurnRepository,
+        profile_builder: OpponentProfileBuilder,
         prompt_builder: OpponentPromptBuilder,
         llm_provider: LLMProvider,
     ) -> None:
         self._negotiation_repository = negotiation_repository
         self._scenario_repository = scenario_repository
         self._turn_repository = turn_repository
+        self._profile_builder = profile_builder
         self._prompt_builder = prompt_builder
         self._llm_provider = llm_provider
 
@@ -54,7 +57,8 @@ class OpponentService:
                 latest_turn.speaker,
             )
 
-        system_prompt = self._prompt_builder.build_system_prompt(scenario)
+        profile = self._profile_builder.build(scenario.difficulty)
+        system_prompt = self._prompt_builder.build_system_prompt(scenario, profile)
         user_prompt = self._prompt_builder.build_user_prompt(turns)
         generated_content = self._llm_provider.generate(
             system_prompt=system_prompt,

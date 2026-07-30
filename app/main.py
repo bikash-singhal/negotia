@@ -12,6 +12,7 @@ from app.domains.negotiation.repository import NegotiationRepository
 from app.domains.negotiation.service import NegotiationService
 from app.domains.negotiation_turn.repository import NegotiationTurnRepository
 from app.domains.negotiation_turn.service import NegotiationTurnService
+from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.repository import ScenarioRepository
 from app.domains.scenario.service import ScenarioService
 from app.llm.factory import build_llm_provider
@@ -54,6 +55,7 @@ opponent_service = OpponentService(
     negotiation_repository,
     scenario_repository,
     turn_repository,
+    OpponentProfileBuilder(),
     OpponentPromptBuilder(),
     llm_provider,
 )

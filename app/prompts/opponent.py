@@ -1,4 +1,5 @@
 from app.domains.negotiation_turn.models import NegotiationTurn
+from app.domains.opponent.models import OpponentProfile
 from app.domains.scenario.models import Scenario
 
 
@@ -10,7 +11,11 @@ def _render_items(items: list[str]) -> str:
 
 
 class OpponentPromptBuilder:
-    def build_system_prompt(self, scenario: Scenario) -> str:
+    def build_system_prompt(
+        self,
+        scenario: Scenario,
+        profile: OpponentProfile,
+    ) -> str:
         constraints = _render_items(scenario.constraints)
         private_context = _render_items(scenario.hidden_context)
         walk_away_conditions = _render_items(scenario.walk_away_conditions)
@@ -24,6 +29,15 @@ Your objective: {scenario.objective}
 Difficulty: {scenario.difficulty.value}
 Personality: {scenario.personality}
 Negotiation style: {scenario.negotiation_style}
+
+Behavioral guidance
+- Resistance: {profile.resistance_level}
+- Concession pace: {profile.concession_pace}
+- Information disclosure: {profile.information_disclosure}
+- Tactic complexity: {profile.tactic_complexity}
+- Pressure: {profile.pressure_level}
+- Mistake tolerance: {profile.mistake_tolerance}
+- Boundary discipline: {profile.boundary_discipline}
 
 Internal constraints
 {constraints}
@@ -41,6 +55,8 @@ Instructions
 - Do not reveal internal constraints directly; let them guide your decisions.
 - Respond realistically to the user's position and the negotiation history.
 - Make concessions only when consistent with the scenario and its difficulty.
+- Maintain a professional, respectful tone at every difficulty. Greater resistance
+  must never become rude, hostile, dismissive, or deliberately uncooperative.
 - Respond with only the opponent's message.
 - Do not include labels such as "Opponent:".
 """

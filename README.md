@@ -38,6 +38,7 @@ through environment configuration.
 - Ordered turn history for each negotiation session
 - AI opponent-response generation
 - Validation that an opponent response follows a user turn
+- Deterministic opponent behavior profiles for each scenario difficulty
 - Scenario-aware system prompts and complete-history user prompts
 - Deterministic `FakeLLMProvider` for development and testing
 - AWS Bedrock Runtime provider using the Converse API
@@ -84,9 +85,11 @@ flowchart TD
     subgraph Opponent["Opponent AI subsystem"]
         OpponentAPI["Opponent-response API"]
         OpponentService["OpponentService"]
+        ProfileBuilder["OpponentProfileBuilder"]
         PromptBuilder["OpponentPromptBuilder"]
 
         OpponentAPI --> OpponentService
+        OpponentService --> ProfileBuilder
         OpponentService --> PromptBuilder
         OpponentService -->|"loads scenario"| ScenarioRepository
         OpponentService -->|"loads session"| NegotiationRepository
@@ -122,11 +125,12 @@ turns created through the API.
 3. Submit a user turn.
 4. Request an opponent response.
 5. Load the session, referenced scenario, and ordered turn history.
-6. Build the scenario-aware system prompt and conversation-history user prompt.
-7. Call the configured LLM provider.
-8. Strip and validate the generated response.
-9. Save it as the next numbered opponent turn.
-10. Retrieve the ordered conversation history.
+6. Derive a deterministic behavior profile from the scenario difficulty.
+7. Build the scenario-aware system prompt and conversation-history user prompt.
+8. Call the configured LLM provider.
+9. Strip and validate the generated response.
+10. Save it as the next numbered opponent turn.
+11. Retrieve the ordered conversation history.
 
 Illustrative conversation:
 
@@ -162,6 +166,13 @@ A NegotiationTurn references a session by `session_id`, identifies the user or
 opponent speaker, stores the message content, and carries a session-specific turn
 number. Session history is returned in turn-number order.
 
+### Opponent profile
+
+An OpponentProfile translates the scenario's fixed difficulty into deterministic
+guidance for resistance, concessions, disclosure, tactics, pressure, mistake
+tolerance, and boundary discipline. These profiles shape the system prompt while
+keeping every difficulty professional and respectful.
+
 ## Technology stack
 
 - Python 3.12+
@@ -196,6 +207,7 @@ negotia/
 |   |-- domains/
 |   |   |-- negotiation/
 |   |   |-- negotiation_turn/
+|   |   |-- opponent/
 |   |   `-- scenario/
 |   |-- llm/
 |   |   |-- bedrock.py
@@ -341,6 +353,7 @@ Completed:
 - [x] LLM provider abstraction and deterministic fake provider
 - [x] AWS Bedrock provider and configuration-based provider selection
 - [x] Scenario-aware opponent prompt builder
+- [x] Deterministic opponent behavior profiles by scenario difficulty
 - [x] Opponent service and opponent-response API
 
 Planned:

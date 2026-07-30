@@ -11,6 +11,7 @@ from app.domains.negotiation.repository import NegotiationRepository
 from app.domains.negotiation.service import NegotiationService
 from app.domains.negotiation_turn.repository import NegotiationTurnRepository
 from app.domains.negotiation_turn.service import NegotiationTurnService
+from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.repository import ScenarioRepository
 from app.domains.scenario.service import ScenarioService
 from app.llm.fake import FakeLLMProvider
@@ -54,6 +55,7 @@ def client(repositories: Repositories) -> Iterator[TestClient]:
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        OpponentProfileBuilder(),
         OpponentPromptBuilder(),
         FakeLLMProvider(),
     )
@@ -120,6 +122,7 @@ def _replace_opponent_provider(
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        OpponentProfileBuilder(),
         OpponentPromptBuilder(),
         provider,
     )
