@@ -148,6 +148,14 @@ def client(
         negotiation_repository,
     )
     app.state.negotiation_turn_service = negotiation_turn_service
+    debrief_service, strategy_service, memory_service = _build_artifact_services(
+        coach_repository
+    )
+    adaptive_context_service = AdaptiveContextService(memory_service)
+    coach_service = _build_coach_service(
+        coach_repository,
+        adaptive_context_service,
+    )
     opponent_service = OpponentService(
         negotiation_repository,
         scenario_repository,
@@ -156,13 +164,6 @@ def client(
         OpponentProfileBuilder(),
         OpponentPromptBuilder(),
         FakeLLMProvider(),
-    )
-    debrief_service, strategy_service, memory_service = _build_artifact_services(
-        coach_repository
-    )
-    adaptive_context_service = AdaptiveContextService(memory_service)
-    coach_service = _build_coach_service(
-        coach_repository,
         adaptive_context_service,
     )
     app.state.opponent_service = opponent_service
@@ -254,15 +255,6 @@ def _replace_opponent_provider(
     provider: LLMProvider,
 ) -> None:
     scenario_repository, negotiation_repository, turn_repository = repositories
-    opponent_service = OpponentService(
-        negotiation_repository,
-        scenario_repository,
-        turn_repository,
-        _build_state_extractor(),
-        OpponentProfileBuilder(),
-        OpponentPromptBuilder(),
-        provider,
-    )
     negotiation_service = NegotiationService(
         negotiation_repository,
         scenario_repository,
@@ -277,6 +269,16 @@ def _replace_opponent_provider(
     adaptive_context_service = AdaptiveContextService(memory_service)
     coach_service = _build_coach_service(
         coach_repository,
+        adaptive_context_service,
+    )
+    opponent_service = OpponentService(
+        negotiation_repository,
+        scenario_repository,
+        turn_repository,
+        _build_state_extractor(),
+        OpponentProfileBuilder(),
+        OpponentPromptBuilder(),
+        provider,
         adaptive_context_service,
     )
     app.state.opponent_service = opponent_service

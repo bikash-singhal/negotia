@@ -123,6 +123,7 @@ opponent_service = OpponentService(
     OpponentProfileBuilder(),
     OpponentPromptBuilder(),
     llm_provider,
+    adaptive_context_service,
 )
 app.state.opponent_service = opponent_service
 app.state.coach_service = coach_service

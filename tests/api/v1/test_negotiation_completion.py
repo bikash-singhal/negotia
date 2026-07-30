@@ -137,6 +137,7 @@ def completion_context() -> Iterator[CompletionContext]:
         OpponentProfileBuilder(),
         OpponentPromptBuilder(),
         fake_provider,
+        adaptive_context_service,
     )
     app.state.scenario_service = ScenarioService(scenario_repository)
     app.state.negotiation_service = negotiation_service

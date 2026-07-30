@@ -1,9 +1,11 @@
 from datetime import UTC, datetime, timedelta
+from inspect import signature
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 
+from app.domains.adaptive_context.models import AdaptiveContext
 from app.domains.negotiation.exceptions import ScenarioNotFoundError
 from app.domains.negotiation.models import (
     NegotiationSession,
@@ -29,6 +31,7 @@ from app.domains.scenario.repository import ScenarioRepository
 from app.llm.fake import FakeLLMProvider
 from app.llm.provider import LLMProvider
 from app.prompts.opponent import OpponentPromptBuilder
+from app.services.adaptive_context import AdaptiveContextService
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentResponseResult, OpponentService
 
@@ -52,6 +55,14 @@ def _create_state_extractor() -> MagicMock:
     extractor = MagicMock(spec=NegotiationStateExtractor)
     extractor.extract.return_value = _create_state()
     return extractor
+
+
+def _create_adaptive_context_service(
+    context: AdaptiveContext | None = None,
+) -> MagicMock:
+    service = MagicMock(spec=AdaptiveContextService)
+    service.get_context.return_value = context
+    return service
 
 
 def _create_scenario(
@@ -119,6 +130,7 @@ def test_generate_response_creates_and_persists_opponent_turn() -> None:
     scenario = _create_scenario(scenario_repository)
     session = _create_session(negotiation_repository, scenario.scenario_id)
     user_turn = _create_turn(turn_repository, session.id)
+    adaptive_context_service = _create_adaptive_context_service()
     service = OpponentService(
         negotiation_repository,
         scenario_repository,
@@ -127,6 +139,7 @@ def test_generate_response_creates_and_persists_opponent_turn() -> None:
         OpponentProfileBuilder(),
         OpponentPromptBuilder(),
         FakeLLMProvider(),
+        adaptive_context_service,
     )
 
     result = service.generate_response(session.id)
@@ -144,6 +157,7 @@ def test_generate_response_creates_and_persists_opponent_turn() -> None:
     assert turn_repository.get(turn.id) is turn
     assert result.user_turn is user_turn
     assert result.conversation_turns == [user_turn, turn]
+    adaptive_context_service.get_context.assert_called_once_with()
 
 
 def test_generate_response_builds_prompts_and_strips_content() -> None:
@@ -187,6 +201,16 @@ def test_generate_response_builds_prompts_and_strips_content() -> None:
     llm_provider.generate.side_effect = lambda **_kwargs: (
         call_order.append("generate") or "  Generated opponent response.  "
     )
+    adaptive_context = AdaptiveContext(
+        focus_areas=["Ask diagnostic questions"],
+        coaching_focus=["Concession planning"],
+        opponent_adjustments=["Test unilateral concessions"],
+        strengths=["Uses objective criteria"],
+    )
+    adaptive_context_service = _create_adaptive_context_service(adaptive_context)
+    adaptive_context_service.get_context.side_effect = lambda: (
+        call_order.append("context") or adaptive_context
+    )
     service = OpponentService(
         negotiation_repository,
         scenario_repository,
@@ -195,6 +219,7 @@ def test_generate_response_builds_prompts_and_strips_content() -> None:
         profile_builder,
         prompt_builder,
         llm_provider,
+        adaptive_context_service,
     )
 
     result = service.generate_response(session.id)
@@ -202,19 +227,21 @@ def test_generate_response_builds_prompts_and_strips_content() -> None:
 
     assert turn.content == "Generated opponent response."
     assert turn.turn_number == 4
-    assert call_order == ["extract", "build_system", "generate"]
+    assert call_order == ["extract", "context", "build_system", "generate"]
     state_extractor.extract.assert_called_once_with(turns)
     profile_builder.build.assert_called_once_with(scenario.difficulty)
     prompt_builder.build_system_prompt.assert_called_once_with(
         scenario,
         expected_profile,
         expected_state,
+        adaptive_context,
     )
     prompt_builder.build_user_prompt.assert_called_once_with(turns)
     llm_provider.generate.assert_called_once_with(
         system_prompt="system prompt",
         user_prompt="user prompt",
     )
+    adaptive_context_service.get_context.assert_called_once_with()
     assert result.user_turn is turns[-1]
     assert result.conversation_turns == [*turns, turn]
     assert [item.turn_number for item in result.conversation_turns] == [1, 2, 3, 4]
@@ -236,6 +263,7 @@ def test_missing_session_stops_before_other_dependencies() -> None:
         OpponentProfileBuilder(),
         prompt_builder,
         llm_provider,
+        _create_adaptive_context_service(),
     )
 
     with pytest.raises(NegotiationSessionNotFoundError) as exc_info:
@@ -274,6 +302,7 @@ def test_missing_scenario_stops_before_turns_and_provider() -> None:
         OpponentProfileBuilder(),
         prompt_builder,
         llm_provider,
+        _create_adaptive_context_service(),
     )
 
     with pytest.raises(ScenarioNotFoundError) as exc_info:
@@ -302,6 +331,7 @@ def test_empty_history_does_not_call_provider() -> None:
         OpponentProfileBuilder(),
         MagicMock(spec=OpponentPromptBuilder),
         llm_provider,
+        _create_adaptive_context_service(),
     )
 
     with pytest.raises(OpponentResponseRequiresUserTurnError):
@@ -335,6 +365,7 @@ def test_latest_opponent_turn_does_not_call_provider() -> None:
         OpponentProfileBuilder(),
         MagicMock(spec=OpponentPromptBuilder),
         llm_provider,
+        _create_adaptive_context_service(),
     )
 
     with pytest.raises(OpponentResponseOutOfSequenceError) as exc_info:
@@ -366,6 +397,7 @@ def test_state_extraction_failure_does_not_persist_opponent_turn() -> None:
         profile_builder,
         prompt_builder,
         llm_provider,
+        _create_adaptive_context_service(),
     )
 
     with pytest.raises(InvalidNegotiationStateJsonError) as exc_info:
@@ -403,6 +435,7 @@ def test_empty_generated_content_is_not_persisted(
         OpponentProfileBuilder(),
         OpponentPromptBuilder(),
         llm_provider,
+        _create_adaptive_context_service(),
     )
 
     with pytest.raises(EmptyOpponentResponseError):
@@ -429,6 +462,7 @@ def test_provider_exception_propagates_without_persisting_turn() -> None:
         OpponentProfileBuilder(),
         OpponentPromptBuilder(),
         llm_provider,
+        _create_adaptive_context_service(),
     )
 
     with pytest.raises(RuntimeError) as exc_info:
@@ -467,6 +501,7 @@ def test_generation_uses_only_requested_session_history() -> None:
     llm_provider = MagicMock(spec=LLMProvider)
     llm_provider.generate.return_value = "Generated response."
     state_extractor = _create_state_extractor()
+    adaptive_context_service = _create_adaptive_context_service()
     service = OpponentService(
         negotiation_repository,
         scenario_repository,
@@ -475,6 +510,7 @@ def test_generation_uses_only_requested_session_history() -> None:
         OpponentProfileBuilder(),
         prompt_builder,
         llm_provider,
+        adaptive_context_service,
     )
 
     result = service.generate_response(requested_session.id)
@@ -485,5 +521,24 @@ def test_generation_uses_only_requested_session_history() -> None:
     assert result.user_turn is requested_turn
     assert result.conversation_turns == [requested_turn, generated_turn]
     state_extractor.extract.assert_called_once_with([requested_turn])
+    adaptive_context_service.get_context.assert_called_once_with()
+    prompt_builder.build_system_prompt.assert_called_once_with(
+        scenario,
+        OpponentProfileBuilder().build(scenario.difficulty),
+        _create_state(),
+        None,
+    )
     prompt_builder.build_user_prompt.assert_called_once_with([requested_turn])
+    llm_provider.generate.assert_called_once_with(
+        system_prompt="system prompt",
+        user_prompt="user prompt",
+    )
     assert turn_repository.list_by_session(other_session.id) == [other_turn]
+
+
+def test_opponent_service_has_only_adaptive_context_memory_boundary() -> None:
+    parameters = signature(OpponentService.__init__).parameters
+
+    assert "adaptive_context_service" in parameters
+    assert "memory_service" not in parameters
+    assert "memory_repository" not in parameters

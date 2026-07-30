@@ -46,7 +46,7 @@ Memory. None of these artifacts has a standalone API.
 - Negotiation-session creation, listing, and retrieval
 - Negotiation-turn creation and retrieval
 - Ordered turn history for each negotiation session
-- AI opponent-response generation
+- AI opponent-response generation with optional historical Adaptive Context
 - Explicit user-triggered negotiation completion
 - Idempotent completion responses with stable Debrief, Strategy, and optional
   Memory identifiers and timestamps
@@ -183,7 +183,8 @@ flowchart TD
         AdaptiveContextService --> AdaptiveContext
     end
 
-    CoachService -->|"loads optional historical context"| AdaptiveContextService
+    CoachService -->|"loads optional coaching context"| AdaptiveContextService
+    OpponentService -->|"loads optional opponent context"| AdaptiveContextService
 
     Provider["LLMProvider protocol"]
     Fake["FakeLLMProvider"]
@@ -247,20 +248,24 @@ context without persistence, caching, LLM calls, or repository access.
 7. Build a state-extraction prompt from the complete ordered history.
 8. Call the configured LLM provider and validate its JSON as NegotiationState.
 9. Derive a deterministic behavior profile from the scenario difficulty.
-10. Build the opponent system prompt with the state and behavior profile while
-   retaining the complete history in the user prompt.
-11. Call the configured LLM provider for the opponent response.
-12. Strip and validate the generated response.
-13. Save it as the next numbered opponent turn and return it with the complete
+10. Load the latest optional Adaptive Context once.
+11. Build the opponent system prompt with the state, behavior profile, and only
+    relevant opponent adjustments while retaining the complete history in the user
+    prompt. Scenario constraints remain authoritative.
+12. When no Memory exists, use the standard opponent prompt without an adaptive
+    section.
+13. Call the configured LLM provider for the opponent response.
+14. Strip and validate the generated response.
+15. Save it as the next numbered opponent turn and return it with the complete
     ordered conversation history.
-14. NegotiationEngine passes the complete history and latest exchange to
+16. NegotiationEngine passes the complete history and latest exchange to
     CoachService.
-15. CoachService loads the latest optional Adaptive Context once, then extracts and
+17. CoachService loads the latest optional Adaptive Context once, then extracts and
     persists one observation linked to the user and opponent turn IDs. Historical
     context guides attention, while current-session evidence remains authoritative.
-16. When no Memory exists, CoachService follows the standard non-adaptive prompt
+18. When no Memory exists, CoachService follows the standard non-adaptive prompt
     path without rendering a historical-context section.
-17. NegotiationEngine ignores the internal observation record and returns only the
+19. NegotiationEngine ignores the internal observation record and returns only the
     opponent turn to the API.
 
 ## Explicit completion workflow
@@ -383,8 +388,12 @@ coaching focus, persistent risks as opponent adjustments, and recurring
 strengths. Every projection defensively copies its lists and is rebuilt from the
 latest Memory rather than cached. CoachService now reads this projection once per
 observation and renders only coaching-relevant fields; no Memory preserves the
-standard Coach prompt. Opponent prompts do not yet use Adaptive Context, and the
-projection has no public endpoint.
+standard Coach prompt. OpponentService independently renders only opponent
+adjustments as optional risk-testing guidance. These adjustments create realistic
+opportunities rather than predetermined failure, never override scenario
+constraints, and must not reveal historical knowledge during the simulation. No
+Memory preserves the standard Opponent prompt. The projection has no public
+endpoint.
 
 ## Technology stack
 
@@ -582,8 +591,6 @@ uv run ruff format --check .
 - Strategies are persisted only in memory and have no standalone retrieval API.
 - Negotiator Memory is versioned only in memory, is scoped to the single-user MVP,
   and has no standalone API.
-- Adaptive Context is consumed only by CoachService; opponent behavior is not yet
-  adaptive.
 - Authentication and authorization are not implemented.
 - Adaptive difficulty is not implemented.
 - Opponent quality depends on the selected provider, model, scenario data, and
@@ -615,12 +622,13 @@ Completed:
 - [x] Trigger-linked Memory integration with explicit negotiation completion
 - [x] Read-only Adaptive Context projection from latest Memory
 - [x] Coach Adaptive Integration using optional historical context
+- [x] Opponent Adaptive Integration using optional historical risk testing
 
 Planned:
 
 - [ ] Richer multi-round opponent behavior
 - [ ] Standalone Coach, debrief, strategy, and memory APIs
-- [ ] Opponent Adaptive Integration
+- [ ] LangGraph orchestration
 - [ ] Adaptive difficulty
 - [ ] Durable authenticated negotiator profiles
 - [ ] Persistent database

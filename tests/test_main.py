@@ -68,6 +68,7 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert state_extractor._llm_provider is llm_provider
     assert opponent_service._state_extractor is state_extractor
     assert opponent_service._llm_provider is llm_provider
+    assert opponent_service._adaptive_context_service is adaptive_context_service
     assert strategy_extractor._llm_provider is llm_provider
     assert strategy_service._debrief_repository is debrief_repository
     assert strategy_service._extractor is strategy_extractor

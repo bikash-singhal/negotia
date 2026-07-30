@@ -20,6 +20,7 @@ from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.repository import ScenarioRepository
 from app.llm.provider import LLMProvider
 from app.prompts.opponent import OpponentPromptBuilder
+from app.services.adaptive_context import AdaptiveContextService
 from app.services.negotiation_state import NegotiationStateExtractor
 
 
@@ -40,6 +41,7 @@ class OpponentService:
         profile_builder: OpponentProfileBuilder,
         prompt_builder: OpponentPromptBuilder,
         llm_provider: LLMProvider,
+        adaptive_context_service: AdaptiveContextService,
     ) -> None:
         self._negotiation_repository = negotiation_repository
         self._scenario_repository = scenario_repository
@@ -48,6 +50,7 @@ class OpponentService:
         self._profile_builder = profile_builder
         self._prompt_builder = prompt_builder
         self._llm_provider = llm_provider
+        self._adaptive_context_service = adaptive_context_service
 
     def generate_response(self, session_id: UUID) -> OpponentResponseResult:
         negotiation = self._negotiation_repository.get(session_id)
@@ -71,10 +74,12 @@ class OpponentService:
 
         state: NegotiationState = self._state_extractor.extract(turns)
         profile = self._profile_builder.build(scenario.difficulty)
+        adaptive_context = self._adaptive_context_service.get_context()
         system_prompt = self._prompt_builder.build_system_prompt(
             scenario,
             profile,
             state,
+            adaptive_context,
         )
         user_prompt = self._prompt_builder.build_user_prompt(turns)
         generated_content = self._llm_provider.generate(

@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from app.domains.adaptive_context.models import AdaptiveContext
 from app.domains.negotiation_state.models import NegotiationState
 from app.domains.negotiation_turn.models import (
     NegotiationTurn,
@@ -29,12 +30,16 @@ def _create_scenario(
     )
 
 
-def _build_system_prompt(scenario: Scenario) -> str:
+def _build_system_prompt(
+    scenario: Scenario,
+    adaptive_context: AdaptiveContext | None = None,
+) -> str:
     profile = OpponentProfileBuilder().build(scenario.difficulty)
     return OpponentPromptBuilder().build_system_prompt(
         scenario,
         profile,
         _create_state(),
+        adaptive_context,
     )
 
 
@@ -99,20 +104,72 @@ def test_system_prompt_defines_opponent_behavior() -> None:
     assert 'Do not include labels such as "Opponent:"' in prompt
 
 
+def test_system_prompt_omits_adaptive_section_without_context() -> None:
+    scenario = _create_scenario()
+    profile = OpponentProfileBuilder().build(scenario.difficulty)
+    state = _create_state()
+    builder = OpponentPromptBuilder()
+
+    prompt = builder.build_system_prompt(scenario, profile, state)
+
+    assert "Adaptive opponent guidance" not in prompt
+    assert prompt == builder.build_system_prompt(scenario, profile, state, None)
+
+
+def test_system_prompt_renders_only_opponent_adjustments_with_safeguards() -> None:
+    context = AdaptiveContext(
+        focus_areas=["COACH-ONLY FOCUS AREA"],
+        coaching_focus=["COACH-ONLY SKILL"],
+        opponent_adjustments=["Test whether concessions remain reciprocal."],
+        strengths=["COACH-ONLY STRENGTH"],
+    )
+
+    prompt = _build_system_prompt(_create_scenario(), context)
+
+    assert "--- Adaptive opponent guidance ---" in prompt
+    assert "Test whether concessions remain reciprocal." in prompt
+    assert "COACH-ONLY FOCUS AREA" not in prompt
+    assert "COACH-ONLY SKILL" not in prompt
+    assert "COACH-ONLY STRENGTH" not in prompt
+    assert "historical risks to test, not guaranteed current\n  behavior" in prompt
+    assert "Create realistic opportunities that test only the supplied risks" in prompt
+    assert "Do not assume the negotiator will repeat a historical weakness" in prompt
+    assert "Do not state that the negotiator has these weaknesses" in prompt
+    assert (
+        "Never mention Memory, Adaptive Context, previous sessions, or historical "
+        "analysis" in prompt
+    )
+    assert "Scenario constraints are authoritative" in prompt
+    assert "Use only adjustments relevant to the current situation" in prompt
+    assert "Do not force every adjustment into every response" in prompt
+    assert "Allow the negotiator to demonstrate improvement" in prompt
+    assert (
+        "Do not synthesize unrelated tactics beyond the supplied adjustments" in prompt
+    )
+
+
 def test_system_prompt_is_deterministic() -> None:
     scenario = _create_scenario()
     builder = OpponentPromptBuilder()
     profile = OpponentProfileBuilder().build(scenario.difficulty)
     state = _create_state()
+    context = AdaptiveContext(
+        focus_areas=[],
+        coaching_focus=[],
+        opponent_adjustments=["Test unilateral concessions."],
+        strengths=[],
+    )
 
     assert builder.build_system_prompt(
         scenario,
         profile,
         state,
+        context,
     ) == builder.build_system_prompt(
         scenario,
         profile,
         state,
+        context,
     )
 
 

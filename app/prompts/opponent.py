@@ -1,3 +1,4 @@
+from app.domains.adaptive_context.models import AdaptiveContext
 from app.domains.negotiation_state.models import NegotiationState
 from app.domains.negotiation_turn.models import NegotiationTurn
 from app.domains.opponent.models import OpponentProfile
@@ -21,6 +22,7 @@ class OpponentPromptBuilder:
         scenario: Scenario,
         profile: OpponentProfile,
         state: NegotiationState,
+        adaptive_context: AdaptiveContext | None = None,
     ) -> str:
         constraints = _render_items(scenario.constraints)
         private_context = _render_items(scenario.hidden_context)
@@ -28,6 +30,34 @@ class OpponentPromptBuilder:
         agreements = _render_items(state.agreements)
         open_topics = _render_items(state.open_topics)
         unresolved_items = _render_items(state.unresolved_items)
+        adaptive_guidance = ""
+        if adaptive_context is not None:
+            opponent_adjustments = _render_items(adaptive_context.opponent_adjustments)
+            adaptive_guidance = f"""--- Adaptive opponent guidance ---
+
+Historical risk-testing adjustments
+{opponent_adjustments}
+
+Rules for adaptive guidance
+- These adjustments describe historical risks to test, not guaranteed current
+  behavior.
+- Create realistic opportunities that test only the supplied risks.
+- Do not assume the negotiator will repeat a historical weakness.
+- Do not state that the negotiator has these weaknesses.
+- Never mention Memory, Adaptive Context, previous sessions, or historical analysis.
+- Keep all behavior consistent with the scenario and opponent role.
+- Scenario constraints are authoritative and must never be contradicted or overridden.
+- Preserve this instruction priority: scenario constraints, opponent role and
+  behavioral profile, current negotiation state, then adaptive guidance.
+- Use only adjustments relevant to the current situation.
+- Do not force every adjustment into every response.
+- Allow the negotiator to demonstrate improvement.
+- Do not synthesize unrelated tactics beyond the supplied adjustments and existing
+  opponent instructions.
+
+--- End adaptive opponent guidance ---
+
+"""
 
         return f"""You are the {scenario.opponent_role} in a realistic negotiation.
 
@@ -71,7 +101,7 @@ Private context
 Walk-away conditions
 {walk_away_conditions}
 
-Instructions
+{adaptive_guidance}Instructions
 - Act only as the negotiation opponent and remain in character.
 - Do not act as a coach or assistant.
 - Never reveal or quote the private context or walk-away conditions.
