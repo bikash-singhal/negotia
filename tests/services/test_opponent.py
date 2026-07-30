@@ -10,6 +10,8 @@ from app.domains.negotiation.models import (
     NegotiationStatus,
 )
 from app.domains.negotiation.repository import NegotiationRepository
+from app.domains.negotiation_state.exceptions import InvalidNegotiationStateJsonError
+from app.domains.negotiation_state.models import NegotiationState
 from app.domains.negotiation_turn.exceptions import (
     EmptyOpponentResponseError,
     NegotiationSessionNotFoundError,
@@ -27,11 +29,29 @@ from app.domains.scenario.repository import ScenarioRepository
 from app.llm.fake import FakeLLMProvider
 from app.llm.provider import LLMProvider
 from app.prompts.opponent import OpponentPromptBuilder
+from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
 
 FAKE_RESPONSE = (
     "I understand your position, but those terms are difficult for us to accept."
 )
+
+
+def _create_state() -> NegotiationState:
+    return NegotiationState(
+        latest_user_position="The user requested a ten percent reduction.",
+        latest_opponent_position=None,
+        agreements=[],
+        open_topics=["Annual price"],
+        unresolved_items=["Discount percentage"],
+        negotiation_stage="bargaining",
+    )
+
+
+def _create_state_extractor() -> MagicMock:
+    extractor = MagicMock(spec=NegotiationStateExtractor)
+    extractor.extract.return_value = _create_state()
+    return extractor
 
 
 def _create_scenario(
@@ -103,6 +123,7 @@ def test_generate_response_creates_and_persists_opponent_turn() -> None:
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        _create_state_extractor(),
         OpponentProfileBuilder(),
         OpponentPromptBuilder(),
         FakeLLMProvider(),
@@ -149,12 +170,24 @@ def test_generate_response_builds_prompts_and_strips_content() -> None:
     expected_profile = OpponentProfileBuilder().build(scenario.difficulty)
     profile_builder = MagicMock(spec=OpponentProfileBuilder)
     profile_builder.build.return_value = expected_profile
+    expected_state = _create_state()
+    call_order: list[str] = []
+    state_extractor = _create_state_extractor()
+    state_extractor.extract.side_effect = lambda _turns: (
+        call_order.append("extract") or expected_state
+    )
+    prompt_builder.build_system_prompt.side_effect = lambda *_args: (
+        call_order.append("build_system") or "system prompt"
+    )
     llm_provider = MagicMock(spec=LLMProvider)
-    llm_provider.generate.return_value = "  Generated opponent response.  "
+    llm_provider.generate.side_effect = lambda **_kwargs: (
+        call_order.append("generate") or "  Generated opponent response.  "
+    )
     service = OpponentService(
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        state_extractor,
         profile_builder,
         prompt_builder,
         llm_provider,
@@ -164,10 +197,13 @@ def test_generate_response_builds_prompts_and_strips_content() -> None:
 
     assert turn.content == "Generated opponent response."
     assert turn.turn_number == 4
+    assert call_order == ["extract", "build_system", "generate"]
+    state_extractor.extract.assert_called_once_with(turns)
     profile_builder.build.assert_called_once_with(scenario.difficulty)
     prompt_builder.build_system_prompt.assert_called_once_with(
         scenario,
         expected_profile,
+        expected_state,
     )
     prompt_builder.build_user_prompt.assert_called_once_with(turns)
     llm_provider.generate.assert_called_once_with(
@@ -188,6 +224,7 @@ def test_missing_session_stops_before_other_dependencies() -> None:
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        _create_state_extractor(),
         OpponentProfileBuilder(),
         prompt_builder,
         llm_provider,
@@ -225,6 +262,7 @@ def test_missing_scenario_stops_before_turns_and_provider() -> None:
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        _create_state_extractor(),
         OpponentProfileBuilder(),
         prompt_builder,
         llm_provider,
@@ -252,6 +290,7 @@ def test_empty_history_does_not_call_provider() -> None:
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        _create_state_extractor(),
         OpponentProfileBuilder(),
         MagicMock(spec=OpponentPromptBuilder),
         llm_provider,
@@ -284,6 +323,7 @@ def test_latest_opponent_turn_does_not_call_provider() -> None:
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        _create_state_extractor(),
         OpponentProfileBuilder(),
         MagicMock(spec=OpponentPromptBuilder),
         llm_provider,
@@ -295,6 +335,40 @@ def test_latest_opponent_turn_does_not_call_provider() -> None:
     assert exc_info.value.latest_speaker is NegotiationTurnSpeaker.OPPONENT
     llm_provider.generate.assert_not_called()
     turn_repository.create.assert_not_called()
+
+
+def test_state_extraction_failure_does_not_persist_opponent_turn() -> None:
+    negotiation_repository = NegotiationRepository()
+    scenario_repository = ScenarioRepository()
+    turn_repository = NegotiationTurnRepository()
+    scenario = _create_scenario(scenario_repository)
+    session = _create_session(negotiation_repository, scenario.scenario_id)
+    user_turn = _create_turn(turn_repository, session.id)
+    expected_error = InvalidNegotiationStateJsonError()
+    state_extractor = _create_state_extractor()
+    state_extractor.extract.side_effect = expected_error
+    profile_builder = MagicMock(spec=OpponentProfileBuilder)
+    prompt_builder = MagicMock(spec=OpponentPromptBuilder)
+    llm_provider = MagicMock(spec=LLMProvider)
+    service = OpponentService(
+        negotiation_repository,
+        scenario_repository,
+        turn_repository,
+        state_extractor,
+        profile_builder,
+        prompt_builder,
+        llm_provider,
+    )
+
+    with pytest.raises(InvalidNegotiationStateJsonError) as exc_info:
+        service.generate_response(session.id)
+
+    assert exc_info.value is expected_error
+    assert turn_repository.list_by_session(session.id) == [user_turn]
+    profile_builder.build.assert_not_called()
+    prompt_builder.build_system_prompt.assert_not_called()
+    prompt_builder.build_user_prompt.assert_not_called()
+    llm_provider.generate.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -317,6 +391,7 @@ def test_empty_generated_content_is_not_persisted(
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        _create_state_extractor(),
         OpponentProfileBuilder(),
         OpponentPromptBuilder(),
         llm_provider,
@@ -342,6 +417,7 @@ def test_provider_exception_propagates_without_persisting_turn() -> None:
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        _create_state_extractor(),
         OpponentProfileBuilder(),
         OpponentPromptBuilder(),
         llm_provider,
@@ -382,10 +458,12 @@ def test_generation_uses_only_requested_session_history() -> None:
     prompt_builder.build_user_prompt.return_value = "user prompt"
     llm_provider = MagicMock(spec=LLMProvider)
     llm_provider.generate.return_value = "Generated response."
+    state_extractor = _create_state_extractor()
     service = OpponentService(
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        state_extractor,
         OpponentProfileBuilder(),
         prompt_builder,
         llm_provider,
@@ -395,5 +473,6 @@ def test_generation_uses_only_requested_session_history() -> None:
 
     assert generated_turn.session_id == requested_session.id
     assert generated_turn.turn_number == 2
+    state_extractor.extract.assert_called_once_with([requested_turn])
     prompt_builder.build_user_prompt.assert_called_once_with([requested_turn])
     assert turn_repository.list_by_session(other_session.id) == [other_turn]

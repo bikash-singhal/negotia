@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 
 from app.domains.negotiation.exceptions import ScenarioNotFoundError
 from app.domains.negotiation.repository import NegotiationRepository
+from app.domains.negotiation_state.models import NegotiationState
 from app.domains.negotiation_turn.exceptions import (
     EmptyOpponentResponseError,
     NegotiationSessionNotFoundError,
@@ -18,6 +19,7 @@ from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.repository import ScenarioRepository
 from app.llm.provider import LLMProvider
 from app.prompts.opponent import OpponentPromptBuilder
+from app.services.negotiation_state import NegotiationStateExtractor
 
 
 class OpponentService:
@@ -26,6 +28,7 @@ class OpponentService:
         negotiation_repository: NegotiationRepository,
         scenario_repository: ScenarioRepository,
         turn_repository: NegotiationTurnRepository,
+        state_extractor: NegotiationStateExtractor,
         profile_builder: OpponentProfileBuilder,
         prompt_builder: OpponentPromptBuilder,
         llm_provider: LLMProvider,
@@ -33,6 +36,7 @@ class OpponentService:
         self._negotiation_repository = negotiation_repository
         self._scenario_repository = scenario_repository
         self._turn_repository = turn_repository
+        self._state_extractor = state_extractor
         self._profile_builder = profile_builder
         self._prompt_builder = prompt_builder
         self._llm_provider = llm_provider
@@ -57,8 +61,13 @@ class OpponentService:
                 latest_turn.speaker,
             )
 
+        state: NegotiationState = self._state_extractor.extract(turns)
         profile = self._profile_builder.build(scenario.difficulty)
-        system_prompt = self._prompt_builder.build_system_prompt(scenario, profile)
+        system_prompt = self._prompt_builder.build_system_prompt(
+            scenario,
+            profile,
+            state,
+        )
         user_prompt = self._prompt_builder.build_user_prompt(turns)
         generated_content = self._llm_provider.generate(
             system_prompt=system_prompt,

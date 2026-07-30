@@ -22,8 +22,8 @@ future work.
 The Day 5 milestone provides an end-to-end opponent-response workflow through a
 versioned FastAPI API. A scenario supplies the negotiation context, a negotiation
 session references that scenario, ordered turns capture the conversation, and the
-opponent service uses the configured LLM provider to generate and persist the next
-opponent turn.
+opponent service uses the configured LLM provider to extract the current
+negotiation state before generating and persisting the next opponent turn.
 
 The default fake provider makes local development and automated tests deterministic
 and does not call AWS. The Bedrock provider is also implemented and can be selected
@@ -38,6 +38,7 @@ through environment configuration.
 - Ordered turn history for each negotiation session
 - AI opponent-response generation
 - Validation that an opponent response follows a user turn
+- LLM-assisted structured negotiation-state extraction
 - Deterministic opponent behavior profiles for each scenario difficulty
 - Scenario-aware system prompts and complete-history user prompts
 - Deterministic `FakeLLMProvider` for development and testing
@@ -85,10 +86,14 @@ flowchart TD
     subgraph Opponent["Opponent AI subsystem"]
         OpponentAPI["Opponent-response API"]
         OpponentService["OpponentService"]
+        StateExtractor["NegotiationStateExtractor"]
+        StatePrompt["NegotiationStatePromptBuilder"]
         ProfileBuilder["OpponentProfileBuilder"]
         PromptBuilder["OpponentPromptBuilder"]
 
         OpponentAPI --> OpponentService
+        OpponentService --> StateExtractor
+        StateExtractor --> StatePrompt
         OpponentService --> ProfileBuilder
         OpponentService --> PromptBuilder
         OpponentService -->|"loads scenario"| ScenarioRepository
@@ -110,6 +115,7 @@ flowchart TD
     Factory -->|"LLM_PROVIDER=bedrock"| Bedrock
 
     OpponentService --> Provider
+    StateExtractor --> Provider
     Fake -.->|"implements"| Provider
     Bedrock -.->|"implements"| Provider
 ```
@@ -125,12 +131,15 @@ turns created through the API.
 3. Submit a user turn.
 4. Request an opponent response.
 5. Load the session, referenced scenario, and ordered turn history.
-6. Derive a deterministic behavior profile from the scenario difficulty.
-7. Build the scenario-aware system prompt and conversation-history user prompt.
-8. Call the configured LLM provider.
-9. Strip and validate the generated response.
-10. Save it as the next numbered opponent turn.
-11. Retrieve the ordered conversation history.
+6. Build a state-extraction prompt from the complete ordered history.
+7. Call the configured LLM provider and validate its JSON as NegotiationState.
+8. Derive a deterministic behavior profile from the scenario difficulty.
+9. Build the opponent system prompt with the state and behavior profile while
+   retaining the complete history in the user prompt.
+10. Call the configured LLM provider for the opponent response.
+11. Strip and validate the generated response.
+12. Save it as the next numbered opponent turn.
+13. Retrieve the ordered conversation history.
 
 Illustrative conversation:
 
@@ -173,6 +182,13 @@ guidance for resistance, concessions, disclosure, tactics, pressure, mistake
 tolerance, and boundary discipline. These profiles shape the system prompt while
 keeping every difficulty professional and respectful.
 
+### Negotiation state
+
+NegotiationState is an immutable, in-memory result extracted from the complete
+turn history before each opponent response. It records the latest user and
+opponent positions, agreements, open topics, unresolved items, and negotiation
+stage. The state supplements the raw history and is not persisted.
+
 ## Technology stack
 
 - Python 3.12+
@@ -206,6 +222,7 @@ negotia/
 |   |   `-- logging_config.py
 |   |-- domains/
 |   |   |-- negotiation/
+|   |   |-- negotiation_state/
 |   |   |-- negotiation_turn/
 |   |   |-- opponent/
 |   |   `-- scenario/
@@ -215,8 +232,10 @@ negotia/
 |   |   |-- fake.py
 |   |   `-- provider.py
 |   |-- prompts/
+|   |   |-- negotiation_state.py
 |   |   `-- opponent.py
 |   |-- services/
+|   |   |-- negotiation_state.py
 |   |   `-- opponent.py
 |   `-- main.py
 |-- tests/
@@ -334,6 +353,8 @@ uv run ruff format --check .
 ## Current limitations
 
 - Repositories are in memory, so all data is lost when the application restarts.
+- Negotiation state is re-extracted for each opponent response and is not persisted
+  or incrementally updated.
 - Authentication and authorization are not implemented.
 - Coach, debrief, strategy, long-term memory, and adaptive difficulty features are
   not implemented.
@@ -354,6 +375,7 @@ Completed:
 - [x] AWS Bedrock provider and configuration-based provider selection
 - [x] Scenario-aware opponent prompt builder
 - [x] Deterministic opponent behavior profiles by scenario difficulty
+- [x] LLM-assisted structured negotiation-state extraction
 - [x] Opponent service and opponent-response API
 
 Planned:

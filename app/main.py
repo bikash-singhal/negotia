@@ -16,7 +16,9 @@ from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.repository import ScenarioRepository
 from app.domains.scenario.service import ScenarioService
 from app.llm.factory import build_llm_provider
+from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
+from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
 
 configure_logging(settings.debug)
@@ -42,6 +44,10 @@ scenario_repository = ScenarioRepository()
 negotiation_repository = NegotiationRepository()
 turn_repository = NegotiationTurnRepository()
 llm_provider = build_llm_provider(settings)
+state_extractor = NegotiationStateExtractor(
+    NegotiationStatePromptBuilder(),
+    llm_provider,
+)
 app.state.scenario_service = ScenarioService(scenario_repository)
 app.state.negotiation_service = NegotiationService(
     negotiation_repository,
@@ -55,6 +61,7 @@ opponent_service = OpponentService(
     negotiation_repository,
     scenario_repository,
     turn_repository,
+    state_extractor,
     OpponentProfileBuilder(),
     OpponentPromptBuilder(),
     llm_provider,

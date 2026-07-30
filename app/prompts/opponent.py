@@ -1,3 +1,4 @@
+from app.domains.negotiation_state.models import NegotiationState
 from app.domains.negotiation_turn.models import NegotiationTurn
 from app.domains.opponent.models import OpponentProfile
 from app.domains.scenario.models import Scenario
@@ -10,15 +11,23 @@ def _render_items(items: list[str]) -> str:
     return "\n".join(f"- {item}" for item in items)
 
 
+def _render_position(position: str | None) -> str:
+    return position if position is not None else "Not established."
+
+
 class OpponentPromptBuilder:
     def build_system_prompt(
         self,
         scenario: Scenario,
         profile: OpponentProfile,
+        state: NegotiationState,
     ) -> str:
         constraints = _render_items(scenario.constraints)
         private_context = _render_items(scenario.hidden_context)
         walk_away_conditions = _render_items(scenario.walk_away_conditions)
+        agreements = _render_items(state.agreements)
+        open_topics = _render_items(state.open_topics)
+        unresolved_items = _render_items(state.unresolved_items)
 
         return f"""You are the {scenario.opponent_role} in a realistic negotiation.
 
@@ -38,6 +47,20 @@ Behavioral guidance
 - Pressure: {profile.pressure_level}
 - Mistake tolerance: {profile.mistake_tolerance}
 - Boundary discipline: {profile.boundary_discipline}
+
+Current negotiation state
+- Latest user position: {_render_position(state.latest_user_position)}
+- Latest opponent position: {_render_position(state.latest_opponent_position)}
+- Negotiation stage: {state.negotiation_stage}
+
+Agreements
+{agreements}
+
+Open topics
+{open_topics}
+
+Unresolved items
+{unresolved_items}
 
 Internal constraints
 {constraints}

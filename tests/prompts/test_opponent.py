@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from app.domains.negotiation_state.models import NegotiationState
 from app.domains.negotiation_turn.models import (
     NegotiationTurn,
     NegotiationTurnSpeaker,
@@ -30,7 +31,22 @@ def _create_scenario(
 
 def _build_system_prompt(scenario: Scenario) -> str:
     profile = OpponentProfileBuilder().build(scenario.difficulty)
-    return OpponentPromptBuilder().build_system_prompt(scenario, profile)
+    return OpponentPromptBuilder().build_system_prompt(
+        scenario,
+        profile,
+        _create_state(),
+    )
+
+
+def _create_state() -> NegotiationState:
+    return NegotiationState(
+        latest_user_position="A two-year term with a ten percent discount.",
+        latest_opponent_position="Current pricing for a two-year term.",
+        agreements=["Both sides prefer a multi-year agreement."],
+        open_topics=["Annual price", "Contract length"],
+        unresolved_items=["Discount percentage"],
+        negotiation_stage="bargaining",
+    )
 
 
 def _create_turn(
@@ -87,13 +103,16 @@ def test_system_prompt_is_deterministic() -> None:
     scenario = _create_scenario()
     builder = OpponentPromptBuilder()
     profile = OpponentProfileBuilder().build(scenario.difficulty)
+    state = _create_state()
 
     assert builder.build_system_prompt(
         scenario,
         profile,
+        state,
     ) == builder.build_system_prompt(
         scenario,
         profile,
+        state,
     )
 
 
@@ -112,6 +131,42 @@ def test_difficulty_profiles_produce_distinct_behavioral_instructions() -> None:
     assert "High - test proposals rigorously" in prompts[ScenarioDifficulty.ADVANCED]
     assert "High but professional" in prompts[ScenarioDifficulty.ADVANCED]
     assert "must never become rude, hostile" in prompts[ScenarioDifficulty.ADVANCED]
+
+
+def test_system_prompt_renders_current_negotiation_state() -> None:
+    state = _create_state()
+    prompt = _build_system_prompt(_create_scenario())
+
+    assert "Current negotiation state" in prompt
+    assert f"- Latest user position: {state.latest_user_position}" in prompt
+    assert f"- Latest opponent position: {state.latest_opponent_position}" in prompt
+    assert f"- Negotiation stage: {state.negotiation_stage}" in prompt
+    assert state.agreements[0] in prompt
+    assert state.open_topics[0] in prompt
+    assert state.unresolved_items[0] in prompt
+
+
+def test_system_prompt_renders_missing_and_empty_state_values_consistently() -> None:
+    scenario = _create_scenario()
+    profile = OpponentProfileBuilder().build(scenario.difficulty)
+    state = NegotiationState(
+        latest_user_position=None,
+        latest_opponent_position=None,
+        agreements=[],
+        open_topics=[],
+        unresolved_items=[],
+        negotiation_stage="opening",
+    )
+
+    prompt = OpponentPromptBuilder().build_system_prompt(
+        scenario,
+        profile,
+        state,
+    )
+
+    assert "- Latest user position: Not established." in prompt
+    assert "- Latest opponent position: Not established." in prompt
+    assert prompt.count("- None specified.") >= 3
 
 
 def test_user_prompt_renders_one_user_turn() -> None:

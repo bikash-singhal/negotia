@@ -17,7 +17,9 @@ from app.domains.scenario.service import ScenarioService
 from app.llm.fake import FakeLLMProvider
 from app.llm.provider import LLMProvider
 from app.main import app
+from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
+from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
 
 FAKE_RESPONSE = (
@@ -28,6 +30,13 @@ Repositories = tuple[
     NegotiationRepository,
     NegotiationTurnRepository,
 ]
+
+
+def _build_state_extractor() -> NegotiationStateExtractor:
+    return NegotiationStateExtractor(
+        NegotiationStatePromptBuilder(),
+        FakeLLMProvider(),
+    )
 
 
 @pytest.fixture
@@ -55,6 +64,7 @@ def client(repositories: Repositories) -> Iterator[TestClient]:
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        _build_state_extractor(),
         OpponentProfileBuilder(),
         OpponentPromptBuilder(),
         FakeLLMProvider(),
@@ -122,6 +132,7 @@ def _replace_opponent_provider(
         negotiation_repository,
         scenario_repository,
         turn_repository,
+        _build_state_extractor(),
         OpponentProfileBuilder(),
         OpponentPromptBuilder(),
         provider,
