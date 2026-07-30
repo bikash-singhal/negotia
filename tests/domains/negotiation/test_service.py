@@ -1,10 +1,14 @@
 from datetime import UTC, datetime, timedelta
+from inspect import signature
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 
-from app.domains.negotiation.exceptions import ScenarioNotFoundError
+from app.domains.negotiation.exceptions import (
+    InvalidNegotiationStatusTransitionError,
+    ScenarioNotFoundError,
+)
 from app.domains.negotiation.models import NegotiationSession, NegotiationStatus
 from app.domains.negotiation.repository import NegotiationRepository
 from app.domains.negotiation.schemas import NegotiationSessionCreate
@@ -28,12 +32,14 @@ def _create_stored_scenario(repository: ScenarioRepository) -> Scenario:
     )
 
 
-def _create_session() -> NegotiationSession:
+def _create_session(
+    status: NegotiationStatus = NegotiationStatus.CREATED,
+) -> NegotiationSession:
     now = datetime.now(UTC)
     return NegotiationSession(
         id=uuid4(),
         scenario_id=uuid4(),
-        status=NegotiationStatus.CREATED,
+        status=status,
         created_at=now,
         updated_at=now,
     )
@@ -131,3 +137,72 @@ def test_list_sessions_delegates_to_negotiation_repository() -> None:
 
     assert result == sessions
     negotiation_repository.list.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    "initial_status",
+    [NegotiationStatus.CREATED, NegotiationStatus.ACTIVE],
+)
+def test_mark_completed_persists_valid_transition(
+    initial_status: NegotiationStatus,
+) -> None:
+    negotiation_repository = NegotiationRepository()
+    session = _create_session(initial_status)
+    session.updated_at = datetime(2025, 1, 1, tzinfo=UTC)
+    original_updated_at = session.updated_at
+    negotiation_repository.create(session)
+    service = NegotiationService(
+        negotiation_repository,
+        MagicMock(spec=ScenarioRepository),
+    )
+
+    result = service.mark_completed(session.id)
+
+    assert result is session
+    assert result.status is NegotiationStatus.COMPLETED
+    assert result.updated_at > original_updated_at
+    assert result.updated_at.tzinfo is not None
+    assert result.updated_at.utcoffset() == timedelta(0)
+    assert negotiation_repository.get(session.id) is result
+
+
+def test_mark_completed_is_idempotent_without_updating_timestamp() -> None:
+    negotiation_repository = NegotiationRepository()
+    session = _create_session(NegotiationStatus.COMPLETED)
+    original_updated_at = session.updated_at
+    negotiation_repository.create(session)
+    service = NegotiationService(
+        negotiation_repository,
+        MagicMock(spec=ScenarioRepository),
+    )
+
+    result = service.mark_completed(session.id)
+
+    assert result is session
+    assert result.updated_at is original_updated_at
+
+
+def test_mark_completed_rejects_abandoned_session() -> None:
+    negotiation_repository = NegotiationRepository()
+    session = negotiation_repository.create(
+        _create_session(NegotiationStatus.ABANDONED)
+    )
+    service = NegotiationService(
+        negotiation_repository,
+        MagicMock(spec=ScenarioRepository),
+    )
+
+    with pytest.raises(InvalidNegotiationStatusTransitionError) as exc_info:
+        service.mark_completed(session.id)
+
+    assert exc_info.value.session_id == session.id
+    assert exc_info.value.current_status is NegotiationStatus.ABANDONED
+    assert exc_info.value.target_status is NegotiationStatus.COMPLETED
+    assert session.status is NegotiationStatus.ABANDONED
+
+
+def test_negotiation_service_has_no_debrief_or_llm_dependency() -> None:
+    parameters = signature(NegotiationService.__init__).parameters
+
+    assert "debrief_service" not in parameters
+    assert "llm_provider" not in parameters

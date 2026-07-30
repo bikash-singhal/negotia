@@ -288,3 +288,28 @@ def test_service_has_no_turn_or_scenario_repository_dependency() -> None:
 
     assert "turn_repository" not in parameters
     assert "scenario_repository" not in parameters
+
+
+def test_get_for_session_delegates_to_debrief_repository() -> None:
+    session_id = uuid4()
+    coach_repository = MagicMock(spec=CoachObservationRepository)
+    extractor = MagicMock(spec=DebriefExtractor)
+    debrief_repository = MagicMock(spec=NegotiationDebriefRepository)
+    expected_record = NegotiationDebriefRecord(
+        id=uuid4(),
+        session_id=session_id,
+        debrief=_valid_debrief(),
+        observation_count=1,
+        created_at=datetime.now(UTC),
+    )
+    debrief_repository.get_by_session.return_value = expected_record
+    service = DebriefService(
+        coach_repository,
+        extractor,
+        debrief_repository,
+    )
+
+    result = service.get_for_session(session_id)
+
+    assert result is expected_record
+    debrief_repository.get_by_session.assert_called_once_with(session_id)

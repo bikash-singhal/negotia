@@ -4,8 +4,17 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.dependencies import get_negotiation_engine, get_negotiation_service
-from app.domains.negotiation.exceptions import ScenarioNotFoundError
+from app.domains.debrief.exceptions import NoCoachObservationsError
+from app.domains.negotiation.exceptions import (
+    InvalidNegotiationStatusTransitionError,
+    NegotiationCompletionLatestTurnFromUserError,
+    NegotiationCompletionRequiresExchangeError,
+    NegotiationCompletionWithoutTurnsError,
+    ScenarioNotFoundError,
+)
 from app.domains.negotiation.schemas import (
+    NegotiationCompletionResponse,
+    NegotiationDebriefResponse,
     NegotiationSessionCreate,
     NegotiationSessionResponse,
 )
@@ -20,6 +29,46 @@ from app.domains.negotiation_turn.schemas import NegotiationTurnResponse
 from app.services.negotiation_engine import NegotiationEngine
 
 router = APIRouter()
+
+
+@router.post(
+    "/negotiations/{session_id}/complete",
+    response_model=NegotiationCompletionResponse,
+    status_code=status.HTTP_200_OK,
+)
+def complete_negotiation(
+    session_id: UUID,
+    engine: Annotated[NegotiationEngine, Depends(get_negotiation_engine)],
+) -> NegotiationCompletionResponse:
+    try:
+        result = engine.complete_session(session_id)
+    except NegotiationSessionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from None
+    except (
+        InvalidNegotiationStatusTransitionError,
+        NegotiationCompletionWithoutTurnsError,
+        NegotiationCompletionLatestTurnFromUserError,
+        NegotiationCompletionRequiresExchangeError,
+        NoCoachObservationsError,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from None
+
+    record = result.debrief_record
+    return NegotiationCompletionResponse(
+        session_id=result.session.id,
+        status=result.session.status,
+        completed_at=result.session.updated_at,
+        debrief=NegotiationDebriefResponse.model_validate(record.debrief),
+        observation_count=record.observation_count,
+        debrief_id=record.id,
+        debrief_created_at=record.created_at,
+    )
 
 
 @router.post(

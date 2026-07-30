@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.domains.coach.repository import CoachObservationRepository
+from app.domains.debrief.repository import NegotiationDebriefRepository
 from app.domains.negotiation.models import NegotiationSession, NegotiationStatus
 from app.domains.negotiation.repository import NegotiationRepository
 from app.domains.negotiation.service import NegotiationService
@@ -19,9 +20,11 @@ from app.llm.fake import FakeLLMProvider
 from app.llm.provider import LLMProvider
 from app.main import app
 from app.prompts.coach import CoachPromptBuilder
+from app.prompts.debrief import DebriefPromptBuilder
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
 from app.services.coach import CoachObservationExtractor, CoachService
+from app.services.debrief import DebriefExtractor, DebriefService
 from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
@@ -60,6 +63,19 @@ def _build_coach_service(
     )
 
 
+def _build_debrief_service(
+    coach_repository: CoachObservationRepository,
+) -> DebriefService:
+    return DebriefService(
+        coach_repository,
+        DebriefExtractor(
+            DebriefPromptBuilder(),
+            FakeLLMProvider(),
+        ),
+        NegotiationDebriefRepository(),
+    )
+
+
 @pytest.fixture
 def repositories() -> Repositories:
     return (
@@ -85,18 +101,21 @@ def client(
         app.state.negotiation_turn_service,
         app.state.opponent_service,
         app.state.coach_service,
+        app.state.debrief_service,
         app.state.negotiation_engine,
     )
     scenario_repository, negotiation_repository, turn_repository = repositories
     app.state.scenario_service = ScenarioService(scenario_repository)
-    app.state.negotiation_service = NegotiationService(
+    negotiation_service = NegotiationService(
         negotiation_repository,
         scenario_repository,
     )
-    app.state.negotiation_turn_service = NegotiationTurnService(
+    app.state.negotiation_service = negotiation_service
+    negotiation_turn_service = NegotiationTurnService(
         turn_repository,
         negotiation_repository,
     )
+    app.state.negotiation_turn_service = negotiation_turn_service
     opponent_service = OpponentService(
         negotiation_repository,
         scenario_repository,
@@ -107,11 +126,16 @@ def client(
         FakeLLMProvider(),
     )
     coach_service = _build_coach_service(coach_repository)
+    debrief_service = _build_debrief_service(coach_repository)
     app.state.opponent_service = opponent_service
     app.state.coach_service = coach_service
+    app.state.debrief_service = debrief_service
     app.state.negotiation_engine = NegotiationEngine(
         opponent_service,
         coach_service,
+        negotiation_service,
+        negotiation_turn_service,
+        debrief_service,
     )
     try:
         with TestClient(app) as test_client:
@@ -123,6 +147,7 @@ def client(
             app.state.negotiation_turn_service,
             app.state.opponent_service,
             app.state.coach_service,
+            app.state.debrief_service,
             app.state.negotiation_engine,
         ) = original_services
 
@@ -193,11 +218,26 @@ def _replace_opponent_provider(
         provider,
     )
     coach_service = _build_coach_service(coach_repository)
+    negotiation_service = NegotiationService(
+        negotiation_repository,
+        scenario_repository,
+    )
+    negotiation_turn_service = NegotiationTurnService(
+        turn_repository,
+        negotiation_repository,
+    )
+    debrief_service = _build_debrief_service(coach_repository)
     app.state.opponent_service = opponent_service
     app.state.coach_service = coach_service
+    app.state.negotiation_service = negotiation_service
+    app.state.negotiation_turn_service = negotiation_turn_service
+    app.state.debrief_service = debrief_service
     app.state.negotiation_engine = NegotiationEngine(
         opponent_service,
         coach_service,
+        negotiation_service,
+        negotiation_turn_service,
+        debrief_service,
     )
 
 

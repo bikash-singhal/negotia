@@ -103,3 +103,9 @@ class DebriefService:
             created_at=datetime.now(UTC),
         )
         return self._debrief_repository.create(record)
+
+    def get_for_session(
+        self,
+        session_id: UUID,
+    ) -> NegotiationDebriefRecord | None:
+        return self._debrief_repository.get_by_session(session_id)

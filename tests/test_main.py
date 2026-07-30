@@ -9,6 +9,8 @@ from app.main import (
     debrief_service,
     llm_provider,
     negotiation_engine,
+    negotiation_service,
+    negotiation_turn_service,
     opponent_service,
     state_extractor,
 )
@@ -43,6 +45,9 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert not hasattr(app.state, "debrief_repository")
     assert negotiation_engine._opponent_service is opponent_service
     assert negotiation_engine._coach_service is coach_service
+    assert negotiation_engine._negotiation_service is negotiation_service
+    assert negotiation_engine._negotiation_turn_service is negotiation_turn_service
+    assert negotiation_engine._debrief_service is debrief_service
     assert app.state.negotiation_engine is negotiation_engine
     assert state_extractor._llm_provider is llm_provider
     assert opponent_service._state_extractor is state_extractor
@@ -50,6 +55,12 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
 
 
 def test_app_has_no_debrief_endpoint() -> None:
-    route_paths = [getattr(route, "path", "") for route in app.routes]
+    route_paths = app.openapi().get("paths", {})
 
     assert all("debrief" not in path for path in route_paths)
+
+
+def test_app_registers_completion_endpoint() -> None:
+    route_paths = app.openapi().get("paths", {})
+
+    assert "/api/v1/negotiations/{session_id}/complete" in route_paths

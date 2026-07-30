@@ -12,10 +12,11 @@ Create scenario
 → submit user turn
 → generate AI opponent response
 → retrieve ordered conversation history
+→ explicitly complete the negotiation and receive a structured debrief
 ```
 
-The Coach API, automatic debrief lifecycle triggering, debrief API exposure,
-strategy, memory, and adaptive-difficulty capabilities remain future work.
+Standalone Coach and debrief retrieval APIs, strategy, memory, and
+adaptive-difficulty capabilities remain future work.
 
 ## Current status
 
@@ -28,9 +29,9 @@ state before generating and persisting the next opponent turn.
 
 The default fake provider makes local development and automated tests deterministic
 and does not call AWS. The Bedrock provider is also implemented and can be selected
-through environment configuration. An internal DebriefService can synthesize
-patterns from stored coach observations, but it is not connected to an API or
-triggered automatically.
+through environment configuration. DebriefService synthesizes patterns from
+stored coach observations only when a client explicitly completes a negotiation.
+The completion response includes the persisted structured debrief.
 
 ## Current functionality
 
@@ -40,6 +41,8 @@ triggered automatically.
 - Negotiation-turn creation and retrieval
 - Ordered turn history for each negotiation session
 - AI opponent-response generation
+- Explicit user-triggered negotiation completion
+- Idempotent completion responses with stable debrief identifiers and timestamps
 - Deterministic orchestration through NegotiationEngine
 - Validation that an opponent response follows a user turn
 - LLM-assisted structured negotiation-state extraction
@@ -62,6 +65,7 @@ triggered automatically.
 ```mermaid
 flowchart TD
     API["Versioned FastAPI API"]
+    CompletionAPI["Completion API"]
     Config["Application configuration"]
     Factory["LLM provider factory"]
     Engine["NegotiationEngine"]
@@ -140,9 +144,14 @@ flowchart TD
     API --> SessionAPI
     API --> TurnAPI
     API --> OpponentAPI
+    API --> CompletionAPI
     OpponentAPI --> Engine
+    CompletionAPI --> Engine
     Engine -->|"request / response result"| OpponentService
     Engine -->|"complete ordered history"| CoachService
+    Engine -->|"validate ordered turns"| TurnService
+    Engine -->|"retrieve or generate debrief"| DebriefService
+    Engine -->|"mark completed"| SessionService
 
     Config --> Factory
     Factory -->|"LLM_PROVIDER=fake"| Fake
@@ -160,8 +169,8 @@ Repositories are instantiated once for the application and shared by the service
 that need them. This lets an opponent response observe scenarios, sessions, and
 turns created through the API, while CoachService retains append-only observations
 for completed exchanges. DebriefService reads only those stored observations and
-persists at most one synthesized debrief per session. It is not invoked by
-NegotiationEngine.
+persists at most one synthesized debrief per session. NegotiationEngine invokes it
+only after an explicit completion request passes session and turn validation.
 
 ## End-to-end opponent workflow
 
@@ -186,6 +195,19 @@ NegotiationEngine.
     opponent turn IDs.
 16. NegotiationEngine ignores the internal observation record and returns only the
     opponent turn to the API.
+
+## Explicit completion workflow
+
+1. The client explicitly requests completion; negotiation content and LLM output
+   never complete a session automatically.
+2. NegotiationEngine validates the session, ordered turns, latest opponent turn,
+   an adjacent user-opponent exchange, and available coach observations.
+3. DebriefService reuses an existing debrief or generates one only from stored
+   CoachObservationRecords.
+4. NegotiationService transitions `created` or `active` to `completed` and updates
+   `updated_at`, which is returned as `completed_at`.
+5. Repeated completion calls return the original timestamp and persisted debrief
+   without revalidating turns or calling the LLM again.
 
 Illustrative conversation:
 
@@ -250,8 +272,8 @@ missed opportunities, recurring risks, an overall assessment, and confidence fro
 stored CoachObservationRecords. It does not receive or re-read raw conversation
 turns or scenario data. An immutable NegotiationDebriefRecord stores the composed
 debrief, source-observation count, session ID, and creation time. Generation is
-currently an internal service capability: no automatic lifecycle trigger or API
-endpoint is implemented.
+triggered only by the explicit negotiation-completion endpoint. There is no
+automatic completion inference or standalone debrief retrieval endpoint.
 
 ## Technology stack
 
@@ -388,10 +410,15 @@ The API is available at `http://127.0.0.1:8000`.
 | `GET` | `/api/v1/turns/{turn_id}` | Retrieve a turn. |
 | `GET` | `/api/v1/negotiations/{session_id}/turns` | Retrieve ordered session history. |
 | `POST` | `/api/v1/negotiations/{session_id}/opponent-response` | Generate and store the next opponent turn. |
+| `POST` | `/api/v1/negotiations/{session_id}/complete` | Explicitly complete a negotiation and return its persisted debrief. |
 
 The opponent-response endpoint requires an existing user turn. It returns `409`
 when there is no user turn or when the latest turn already belongs to the
 opponent.
+
+The completion endpoint requires at least one completed user-opponent exchange,
+an opponent latest turn, and a persisted coach observation. Repeated successful
+completion requests are idempotent.
 
 The unversioned `GET /health` path returns `404`. Error responses use the
 application's consistent JSON envelope:
@@ -428,8 +455,11 @@ uv run ruff format --check .
   or incrementally updated.
 - Coach observations are persisted only in memory and are not returned by the API
   or available through a retrieval endpoint.
-- Debriefs are persisted only in memory, are generated only through internal
-  service calls, and have no API or automatic lifecycle trigger.
+- Debriefs are persisted only in memory and are exposed only as part of the
+  explicit completion response; no standalone retrieval endpoint exists.
+- In-memory repositories do not provide a transaction spanning debrief
+  persistence and session-status updates. A retry reuses a debrief persisted
+  before a failed status transition.
 - Authentication and authorization are not implemented.
 - Strategy, long-term memory, and adaptive difficulty are not implemented.
 - Opponent quality depends on the selected provider, model, scenario data, and
@@ -454,11 +484,12 @@ Completed:
 - [x] Structured debrief extraction and in-memory per-session persistence
 - [x] Deterministic NegotiationEngine orchestration layer
 - [x] Opponent service and opponent-response API
+- [x] Explicit, idempotent negotiation completion and debrief response
 
 Planned:
 
 - [ ] Richer multi-round opponent behavior
-- [ ] Coach and debrief APIs, automatic debrief lifecycle triggering, and strategy
+- [ ] Standalone Coach and debrief retrieval APIs, and strategy
 - [ ] Adaptive difficulty and long-term memory
 - [ ] Persistent database
 - [ ] Authentication and authorization

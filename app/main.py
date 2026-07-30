@@ -75,14 +75,16 @@ debrief_service = DebriefService(
     debrief_repository,
 )
 app.state.scenario_service = ScenarioService(scenario_repository)
-app.state.negotiation_service = NegotiationService(
+negotiation_service = NegotiationService(
     negotiation_repository,
     scenario_repository,
 )
-app.state.negotiation_turn_service = NegotiationTurnService(
+app.state.negotiation_service = negotiation_service
+negotiation_turn_service = NegotiationTurnService(
     turn_repository,
     negotiation_repository,
 )
+app.state.negotiation_turn_service = negotiation_turn_service
 opponent_service = OpponentService(
     negotiation_repository,
     scenario_repository,
@@ -98,6 +100,9 @@ app.state.debrief_service = debrief_service
 negotiation_engine = NegotiationEngine(
     opponent_service,
     coach_service,
+    negotiation_service,
+    negotiation_turn_service,
+    debrief_service,
 )
 app.state.negotiation_engine = negotiation_engine
 

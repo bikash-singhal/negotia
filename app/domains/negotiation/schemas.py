@@ -19,3 +19,24 @@ class NegotiationSessionResponse(BaseModel):
     status: NegotiationStatus
     created_at: AwareDatetime
     updated_at: AwareDatetime
+
+
+class NegotiationDebriefResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    repeated_strengths: list[str]
+    repeated_weaknesses: list[str]
+    key_missed_opportunities: list[str]
+    recurring_risks: list[str]
+    overall_assessment: str
+    confidence: str
+
+
+class NegotiationCompletionResponse(BaseModel):
+    session_id: UUID
+    status: NegotiationStatus
+    completed_at: AwareDatetime
+    debrief: NegotiationDebriefResponse
+    observation_count: int
+    debrief_id: UUID
+    debrief_created_at: AwareDatetime
