@@ -4,6 +4,26 @@ class FakeLLMProvider:
         system_prompt: str,
         user_prompt: str,
     ) -> str:
+        if system_prompt.startswith("You are an expert negotiation memory analyst"):
+            session_count = 2
+            history_prefix = "Persisted artifacts from "
+            if user_prompt.startswith(history_prefix):
+                rendered_count = user_prompt.removeprefix(history_prefix).partition(
+                    " "
+                )[0]
+                if rendered_count.isdigit():
+                    session_count = int(rendered_count)
+            return (
+                '{"recurring_strengths": ["Uses conditional concessions."], '
+                '"recurring_weaknesses": ["Anchors before gathering information."], '
+                '"improving_skills": ["Concession planning"], '
+                '"persistent_risks": ["Makes unilateral concessions."], '
+                '"priority_focus_areas": ["Diagnostic questioning"], '
+                '"recommended_drills": ["Practice five discovery questions."], '
+                f'"sessions_analyzed": {session_count}, '
+                '"confidence": "medium"}'
+            )
+
         if system_prompt.startswith("You are an expert negotiation strategy advisor"):
             return (
                 '{"primary_objective": '

@@ -71,3 +71,30 @@ def test_generate_returns_deterministic_strategy_json() -> None:
     assert '"primary_objective"' in first_response
     assert '"expected_outcome"' in first_response
     assert '"prioritized_tactics"' in first_response
+
+
+def test_generate_returns_deterministic_memory_json() -> None:
+    provider = FakeLLMProvider()
+    system_prompt = "You are an expert negotiation memory analyst."
+
+    first_response = provider.generate(
+        system_prompt=system_prompt,
+        user_prompt="First set of persisted artifacts.",
+    )
+    second_response = provider.generate(
+        system_prompt=system_prompt,
+        user_prompt="Second set of persisted artifacts.",
+    )
+
+    assert first_response == second_response
+    assert '"recurring_strengths"' in first_response
+    assert '"sessions_analyzed": 2' in first_response
+
+
+def test_memory_response_uses_supplied_session_count() -> None:
+    response = FakeLLMProvider().generate(
+        system_prompt="You are an expert negotiation memory analyst.",
+        user_prompt="Persisted artifacts from 3 negotiation sessions\n\n...",
+    )
+
+    assert '"sessions_analyzed": 3' in response

@@ -66,3 +66,14 @@ def test_repository_has_no_update_or_delete_operations() -> None:
 
     assert not hasattr(repository, "update")
     assert not hasattr(repository, "delete")
+
+
+def test_list_all_returns_all_records_as_defensive_copy() -> None:
+    repository = NegotiationStrategyRepository()
+    first = repository.create(_create_record(uuid4()))
+    second = repository.create(_create_record(uuid4()))
+
+    records = repository.list_all()
+    records.clear()
+
+    assert repository.list_all() == [first, second]

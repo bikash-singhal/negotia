@@ -15,7 +15,7 @@ Create scenario
 → explicitly complete the negotiation and receive a structured debrief and strategy
 ```
 
-Standalone Coach, debrief, and strategy APIs, memory, and adaptive-difficulty
+Standalone Coach, debrief, strategy, and memory APIs plus adaptive-difficulty
 capabilities remain future work.
 
 ## Current status
@@ -33,7 +33,9 @@ through environment configuration. DebriefService synthesizes patterns from
 stored coach observations only when a client explicitly completes a negotiation.
 StrategyService then turns that persisted debrief into actionable recommendations.
 The completion response includes both persisted artifacts. Neither artifact has a
-standalone API.
+standalone API. An isolated MemoryService can synthesize immutable, versioned
+single-user negotiator profiles from at least two persisted Debrief/Strategy
+pairs. Memory is not called by completion or exposed through an API.
 
 ## Current functionality
 
@@ -54,6 +56,9 @@ standalone API.
 - One in-memory debrief record per negotiation session
 - LLM-assisted structured Strategy extraction from a persisted debrief
 - One in-memory Strategy record per negotiation session
+- LLM-assisted cross-session negotiator Memory extraction from persisted Debrief
+  and Strategy records
+- Immutable in-memory negotiator Memory versions for the single-user MVP
 - Deterministic opponent behavior profiles for each scenario difficulty
 - Scenario-aware system prompts and complete-history user prompts
 - Deterministic `FakeLLMProvider` for development and testing
@@ -153,6 +158,19 @@ flowchart TD
         StrategyExtractor --> StrategyPrompt
     end
 
+    subgraph Memory["Memory subsystem"]
+        MemoryService["MemoryService"]
+        MemoryExtractor["MemoryExtractor"]
+        MemoryRepository["NegotiatorMemoryRepository"]
+        MemoryPrompt["MemoryPromptBuilder"]
+
+        StrategyRepository --> MemoryService
+        DebriefRepository --> MemoryService
+        MemoryService --> MemoryExtractor
+        MemoryService --> MemoryRepository
+        MemoryExtractor --> MemoryPrompt
+    end
+
     Provider["LLMProvider protocol"]
     Fake["FakeLLMProvider"]
     Bedrock["BedrockLLMProvider"]
@@ -180,6 +198,7 @@ flowchart TD
     CoachExtractor --> Provider
     DebriefExtractor --> Provider
     StrategyExtractor --> Provider
+    MemoryExtractor --> Provider
     Fake -.->|"implements"| Provider
     Bedrock -.->|"implements"| Provider
 ```
@@ -193,6 +212,10 @@ only after an explicit completion request passes session and turn validation.
 StrategyService reads only a persisted NegotiationDebriefRecord and stores at most
 one strategy per session. NegotiationEngine invokes it after the debrief is
 available and before marking the session completed.
+MemoryService is wired independently at application startup. It lists persisted
+strategies, resolves the corresponding debriefs by session ID, requires at least
+two complete pairs, and stores each generated profile as a new immutable version.
+NegotiationEngine has no Memory dependency.
 
 ## End-to-end opponent workflow
 
@@ -309,6 +332,15 @@ does not receive turns, coach observations, scenarios, negotiation state, or
 session repositories. It is generated or reused during explicit completion and
 returned as a strongly typed part of the completion response.
 
+### Negotiator memory
+
+NegotiatorMemory identifies cross-session strengths, weaknesses, improving
+skills, persistent risks, priority focus areas, and recommended drills using only
+persisted NegotiationDebriefRecord and NegotiationStrategyRecord pairs. Each
+NegotiatorMemoryRecord stores the sorted source session IDs and a UTC creation
+time. Records form an append-only version history for the current single-user
+MVP. Memory is not generated during completion and has no public endpoint.
+
 ## Technology stack
 
 - Python 3.12+
@@ -343,6 +375,7 @@ negotia/
 |   |-- domains/
 |   |   |-- coach/
 |   |   |-- debrief/
+|   |   |-- memory/
 |   |   |-- negotiation/
 |   |   |-- negotiation_state/
 |   |   |-- negotiation_turn/
@@ -357,12 +390,14 @@ negotia/
 |   |-- prompts/
 |   |   |-- coach.py
 |   |   |-- debrief.py
+|   |   |-- memory.py
 |   |   |-- negotiation_state.py
 |   |   |-- opponent.py
 |   |   `-- strategy.py
 |   |-- services/
 |   |   |-- coach.py
 |   |   |-- debrief.py
+|   |   |-- memory.py
 |   |   |-- negotiation_engine.py
 |   |   |-- negotiation_state.py
 |   |   |-- opponent.py
@@ -498,8 +533,10 @@ uv run ruff format --check .
   strategy persistence and the session-status update. A retry reuses artifacts
   persisted before a later completion step failed.
 - Strategies are persisted only in memory and have no standalone retrieval API.
+- Negotiator Memory is versioned only in memory, is scoped to the single-user MVP,
+  and has no API or automatic completion integration.
 - Authentication and authorization are not implemented.
-- Long-term memory and adaptive difficulty are not implemented.
+- Adaptive difficulty is not implemented.
 - Opponent quality depends on the selected provider, model, scenario data, and
   prompt design.
 - The current backend does not include a web frontend or durable database.
@@ -525,12 +562,14 @@ Completed:
 - [x] Explicit, idempotent negotiation completion with debrief and strategy response
 - [x] Standalone structured Strategy extraction and in-memory persistence
 - [x] Strategy integration with negotiation completion
+- [x] Isolated cross-session negotiator Memory extraction and version persistence
 
 Planned:
 
 - [ ] Richer multi-round opponent behavior
-- [ ] Standalone Coach, debrief, and strategy APIs
-- [ ] Adaptive difficulty and long-term memory
+- [ ] Standalone Coach, debrief, strategy, and memory APIs
+- [ ] Adaptive difficulty
+- [ ] Durable authenticated negotiator profiles
 - [ ] Persistent database
 - [ ] Authentication and authorization
 - [ ] Web frontend and production deployment

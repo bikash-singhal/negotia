@@ -25,3 +25,6 @@ class NegotiationStrategyRepository:
         session_id: UUID,
     ) -> NegotiationStrategyRecord | None:
         return self._records.get(session_id)
+
+    def list_all(self) -> list[NegotiationStrategyRecord]:
+        return list(self._records.values())

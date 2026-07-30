@@ -10,6 +10,7 @@ from app.core.exception_handlers import register_exception_handlers
 from app.core.logging_config import configure_logging
 from app.domains.coach.repository import CoachObservationRepository
 from app.domains.debrief.repository import NegotiationDebriefRepository
+from app.domains.memory.repository import NegotiatorMemoryRepository
 from app.domains.negotiation.repository import NegotiationRepository
 from app.domains.negotiation.service import NegotiationService
 from app.domains.negotiation_turn.repository import NegotiationTurnRepository
@@ -21,11 +22,13 @@ from app.domains.strategy.repository import NegotiationStrategyRepository
 from app.llm.factory import build_llm_provider
 from app.prompts.coach import CoachPromptBuilder
 from app.prompts.debrief import DebriefPromptBuilder
+from app.prompts.memory import MemoryPromptBuilder
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
 from app.prompts.strategy import StrategyPromptBuilder
 from app.services.coach import CoachObservationExtractor, CoachService
 from app.services.debrief import DebriefExtractor, DebriefService
+from app.services.memory import MemoryExtractor, MemoryService
 from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
@@ -87,6 +90,17 @@ strategy_service = StrategyService(
     strategy_extractor,
     strategy_repository,
 )
+memory_extractor = MemoryExtractor(
+    MemoryPromptBuilder(),
+    llm_provider,
+)
+memory_repository = NegotiatorMemoryRepository()
+memory_service = MemoryService(
+    debrief_repository,
+    strategy_repository,
+    memory_extractor,
+    memory_repository,
+)
 app.state.scenario_service = ScenarioService(scenario_repository)
 negotiation_service = NegotiationService(
     negotiation_repository,
@@ -111,6 +125,7 @@ app.state.opponent_service = opponent_service
 app.state.coach_service = coach_service
 app.state.debrief_service = debrief_service
 app.state.strategy_service = strategy_service
+app.state.memory_service = memory_service
 negotiation_engine = NegotiationEngine(
     opponent_service,
     coach_service,

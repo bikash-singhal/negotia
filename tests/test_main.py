@@ -8,6 +8,9 @@ from app.main import (
     debrief_repository,
     debrief_service,
     llm_provider,
+    memory_extractor,
+    memory_repository,
+    memory_service,
     negotiation_engine,
     negotiation_service,
     negotiation_turn_service,
@@ -19,6 +22,7 @@ from app.main import (
 )
 from app.services.coach import CoachObservationExtractor, CoachService
 from app.services.debrief import DebriefExtractor, DebriefService
+from app.services.memory import MemoryExtractor, MemoryService
 from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
@@ -31,6 +35,8 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert isinstance(coach_service, CoachService)
     assert isinstance(debrief_extractor, DebriefExtractor)
     assert isinstance(debrief_service, DebriefService)
+    assert isinstance(memory_extractor, MemoryExtractor)
+    assert isinstance(memory_service, MemoryService)
     assert isinstance(negotiation_engine, NegotiationEngine)
     assert isinstance(state_extractor, NegotiationStateExtractor)
     assert isinstance(strategy_extractor, StrategyExtractor)
@@ -65,6 +71,14 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert app.state.strategy_service is strategy_service
     assert not hasattr(app.state, "strategy_repository")
     assert negotiation_engine._strategy_service is strategy_service
+    assert memory_extractor._llm_provider is llm_provider
+    assert memory_service._debrief_repository is debrief_repository
+    assert memory_service._strategy_repository is strategy_repository
+    assert memory_service._extractor is memory_extractor
+    assert memory_service._memory_repository is memory_repository
+    assert app.state.memory_service is memory_service
+    assert not hasattr(app.state, "memory_repository")
+    assert not hasattr(negotiation_engine, "_memory_service")
 
 
 def test_app_has_no_debrief_endpoint() -> None:
@@ -83,3 +97,9 @@ def test_app_has_no_strategy_endpoint() -> None:
     route_paths = app.openapi().get("paths", {})
 
     assert all("strategy" not in path for path in route_paths)
+
+
+def test_app_has_no_memory_endpoint() -> None:
+    route_paths = app.openapi().get("paths", {})
+
+    assert all("memory" not in path for path in route_paths)
