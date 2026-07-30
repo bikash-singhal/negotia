@@ -34,3 +34,21 @@ def test_generate_is_deterministic() -> None:
     )
 
     assert first_response == second_response == EXPECTED_RESPONSE
+
+
+def test_generate_returns_deterministic_debrief_json() -> None:
+    provider = FakeLLMProvider()
+    system_prompt = "You are an expert negotiation debrief analyst."
+
+    first_response = provider.generate(
+        system_prompt=system_prompt,
+        user_prompt="First set of stored observations.",
+    )
+    second_response = provider.generate(
+        system_prompt=system_prompt,
+        user_prompt="Second set of stored observations.",
+    )
+
+    assert first_response == second_response
+    assert '"repeated_strengths": []' in first_response
+    assert '"confidence": "low"' in first_response

@@ -14,8 +14,8 @@ Create scenario
 → retrieve ordered conversation history
 ```
 
-The Coach API, debrief, strategy, memory, and adaptive-difficulty capabilities
-remain future work.
+The Coach API, automatic debrief lifecycle triggering, debrief API exposure,
+strategy, memory, and adaptive-difficulty capabilities remain future work.
 
 ## Current status
 
@@ -28,7 +28,9 @@ state before generating and persisting the next opponent turn.
 
 The default fake provider makes local development and automated tests deterministic
 and does not call AWS. The Bedrock provider is also implemented and can be selected
-through environment configuration.
+through environment configuration. An internal DebriefService can synthesize
+patterns from stored coach observations, but it is not connected to an API or
+triggered automatically.
 
 ## Current functionality
 
@@ -42,6 +44,8 @@ through environment configuration.
 - Validation that an opponent response follows a user turn
 - LLM-assisted structured negotiation-state extraction
 - LLM-assisted coach observation extraction service
+- LLM-assisted structured debrief extraction from stored coach observations
+- One in-memory debrief record per negotiation session
 - Deterministic opponent behavior profiles for each scenario difficulty
 - Scenario-aware system prompts and complete-history user prompts
 - Deterministic `FakeLLMProvider` for development and testing
@@ -116,6 +120,18 @@ flowchart TD
         CoachExtractor --> CoachPrompt
     end
 
+    subgraph Debrief["Debrief subsystem"]
+        DebriefService["DebriefService"]
+        DebriefExtractor["DebriefExtractor"]
+        DebriefRepository["NegotiationDebriefRepository"]
+        DebriefPrompt["DebriefPromptBuilder"]
+
+        DebriefService -->|"loads stored observations"| CoachRepository
+        DebriefService --> DebriefExtractor
+        DebriefService --> DebriefRepository
+        DebriefExtractor --> DebriefPrompt
+    end
+
     Provider["LLMProvider protocol"]
     Fake["FakeLLMProvider"]
     Bedrock["BedrockLLMProvider"]
@@ -135,6 +151,7 @@ flowchart TD
     OpponentService --> Provider
     StateExtractor --> Provider
     CoachExtractor --> Provider
+    DebriefExtractor --> Provider
     Fake -.->|"implements"| Provider
     Bedrock -.->|"implements"| Provider
 ```
@@ -142,7 +159,9 @@ flowchart TD
 Repositories are instantiated once for the application and shared by the services
 that need them. This lets an opponent response observe scenarios, sessions, and
 turns created through the API, while CoachService retains append-only observations
-for completed exchanges.
+for completed exchanges. DebriefService reads only those stored observations and
+persists at most one synthesized debrief per session. It is not invoked by
+NegotiationEngine.
 
 ## End-to-end opponent workflow
 
@@ -224,6 +243,16 @@ conversation. The coach analyzes only the user's behavior, does not participate
 in the negotiation, and persists each observation inside an immutable
 CoachObservationRecord linked to the completed user-opponent exchange.
 
+### Negotiation debrief
+
+NegotiationDebrief synthesizes repeated strengths, repeated weaknesses, important
+missed opportunities, recurring risks, an overall assessment, and confidence from
+stored CoachObservationRecords. It does not receive or re-read raw conversation
+turns or scenario data. An immutable NegotiationDebriefRecord stores the composed
+debrief, source-observation count, session ID, and creation time. Generation is
+currently an internal service capability: no automatic lifecycle trigger or API
+endpoint is implemented.
+
 ## Technology stack
 
 - Python 3.12+
@@ -257,6 +286,7 @@ negotia/
 |   |   `-- logging_config.py
 |   |-- domains/
 |   |   |-- coach/
+|   |   |-- debrief/
 |   |   |-- negotiation/
 |   |   |-- negotiation_state/
 |   |   |-- negotiation_turn/
@@ -269,10 +299,12 @@ negotia/
 |   |   `-- provider.py
 |   |-- prompts/
 |   |   |-- coach.py
+|   |   |-- debrief.py
 |   |   |-- negotiation_state.py
 |   |   `-- opponent.py
 |   |-- services/
 |   |   |-- coach.py
+|   |   |-- debrief.py
 |   |   |-- negotiation_engine.py
 |   |   |-- negotiation_state.py
 |   |   `-- opponent.py
@@ -396,9 +428,10 @@ uv run ruff format --check .
   or incrementally updated.
 - Coach observations are persisted only in memory and are not returned by the API
   or available through a retrieval endpoint.
+- Debriefs are persisted only in memory, are generated only through internal
+  service calls, and have no API or automatic lifecycle trigger.
 - Authentication and authorization are not implemented.
-- Debrief, strategy, long-term memory, and adaptive difficulty features are not
-  implemented.
+- Strategy, long-term memory, and adaptive difficulty are not implemented.
 - Opponent quality depends on the selected provider, model, scenario data, and
   prompt design.
 - The current backend does not include a web frontend or durable database.
@@ -418,13 +451,14 @@ Completed:
 - [x] Deterministic opponent behavior profiles by scenario difficulty
 - [x] LLM-assisted structured negotiation-state extraction
 - [x] Coach observation extraction, service, and per-exchange persistence
+- [x] Structured debrief extraction and in-memory per-session persistence
 - [x] Deterministic NegotiationEngine orchestration layer
 - [x] Opponent service and opponent-response API
 
 Planned:
 
 - [ ] Richer multi-round opponent behavior
-- [ ] Coach API, debrief, and strategy agents
+- [ ] Coach and debrief APIs, automatic debrief lifecycle triggering, and strategy
 - [ ] Adaptive difficulty and long-term memory
 - [ ] Persistent database
 - [ ] Authentication and authorization

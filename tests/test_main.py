@@ -4,12 +4,16 @@ from app.main import (
     coach_observation_extractor,
     coach_observation_repository,
     coach_service,
+    debrief_extractor,
+    debrief_repository,
+    debrief_service,
     llm_provider,
     negotiation_engine,
     opponent_service,
     state_extractor,
 )
 from app.services.coach import CoachObservationExtractor, CoachService
+from app.services.debrief import DebriefExtractor, DebriefService
 from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
@@ -19,6 +23,8 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert isinstance(llm_provider, FakeLLMProvider)
     assert isinstance(coach_observation_extractor, CoachObservationExtractor)
     assert isinstance(coach_service, CoachService)
+    assert isinstance(debrief_extractor, DebriefExtractor)
+    assert isinstance(debrief_service, DebriefService)
     assert isinstance(negotiation_engine, NegotiationEngine)
     assert isinstance(state_extractor, NegotiationStateExtractor)
     assert isinstance(opponent_service, OpponentService)
@@ -27,9 +33,23 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert coach_service._repository is coach_observation_repository
     assert app.state.coach_service is coach_service
     assert not hasattr(app.state, "coach_observation_repository")
+    assert debrief_extractor._llm_provider is llm_provider
+    assert debrief_service._coach_observation_repository is (
+        coach_observation_repository
+    )
+    assert debrief_service._extractor is debrief_extractor
+    assert debrief_service._debrief_repository is debrief_repository
+    assert app.state.debrief_service is debrief_service
+    assert not hasattr(app.state, "debrief_repository")
     assert negotiation_engine._opponent_service is opponent_service
     assert negotiation_engine._coach_service is coach_service
     assert app.state.negotiation_engine is negotiation_engine
     assert state_extractor._llm_provider is llm_provider
     assert opponent_service._state_extractor is state_extractor
     assert opponent_service._llm_provider is llm_provider
+
+
+def test_app_has_no_debrief_endpoint() -> None:
+    route_paths = [getattr(route, "path", "") for route in app.routes]
+
+    assert all("debrief" not in path for path in route_paths)

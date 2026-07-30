@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging_config import configure_logging
 from app.domains.coach.repository import CoachObservationRepository
+from app.domains.debrief.repository import NegotiationDebriefRepository
 from app.domains.negotiation.repository import NegotiationRepository
 from app.domains.negotiation.service import NegotiationService
 from app.domains.negotiation_turn.repository import NegotiationTurnRepository
@@ -18,9 +19,11 @@ from app.domains.scenario.repository import ScenarioRepository
 from app.domains.scenario.service import ScenarioService
 from app.llm.factory import build_llm_provider
 from app.prompts.coach import CoachPromptBuilder
+from app.prompts.debrief import DebriefPromptBuilder
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
 from app.services.coach import CoachObservationExtractor, CoachService
+from app.services.debrief import DebriefExtractor, DebriefService
 from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
@@ -61,6 +64,16 @@ coach_service = CoachService(
     coach_observation_extractor,
     coach_observation_repository,
 )
+debrief_extractor = DebriefExtractor(
+    DebriefPromptBuilder(),
+    llm_provider,
+)
+debrief_repository = NegotiationDebriefRepository()
+debrief_service = DebriefService(
+    coach_observation_repository,
+    debrief_extractor,
+    debrief_repository,
+)
 app.state.scenario_service = ScenarioService(scenario_repository)
 app.state.negotiation_service = NegotiationService(
     negotiation_repository,
@@ -81,6 +94,7 @@ opponent_service = OpponentService(
 )
 app.state.opponent_service = opponent_service
 app.state.coach_service = coach_service
+app.state.debrief_service = debrief_service
 negotiation_engine = NegotiationEngine(
     opponent_service,
     coach_service,
