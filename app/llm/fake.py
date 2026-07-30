@@ -4,6 +4,15 @@ class FakeLLMProvider:
         system_prompt: str,
         user_prompt: str,
     ) -> str:
+        if system_prompt.startswith("You are an expert negotiation coach"):
+            return (
+                '{"strengths": [], '
+                '"weaknesses": [], '
+                '"missed_opportunities": [], '
+                '"risk_signals": [], '
+                '"confidence": "low"}'
+            )
+
         if system_prompt.startswith("You extract structured negotiation state"):
             return (
                 '{"latest_user_position": null, '

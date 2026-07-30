@@ -14,8 +14,8 @@ Create scenario
 → retrieve ordered conversation history
 ```
 
-Coaching, strategy, debrief, memory, and adaptive-difficulty capabilities remain
-future work.
+The Coach API, debrief, strategy, memory, and adaptive-difficulty capabilities
+remain future work.
 
 ## Current status
 
@@ -39,6 +39,7 @@ through environment configuration.
 - AI opponent-response generation
 - Validation that an opponent response follows a user turn
 - LLM-assisted structured negotiation-state extraction
+- LLM-assisted coach observation extraction service
 - Deterministic opponent behavior profiles for each scenario difficulty
 - Scenario-aware system prompts and complete-history user prompts
 - Deterministic `FakeLLMProvider` for development and testing
@@ -101,6 +102,15 @@ flowchart TD
         OpponentService -->|"loads and saves turns"| TurnRepository
     end
 
+    subgraph Coach["Coach subsystem"]
+        CoachService["CoachService"]
+        CoachExtractor["CoachObservationExtractor"]
+        CoachPrompt["CoachPromptBuilder"]
+
+        CoachService --> CoachExtractor
+        CoachExtractor --> CoachPrompt
+    end
+
     Provider["LLMProvider protocol"]
     Fake["FakeLLMProvider"]
     Bedrock["BedrockLLMProvider"]
@@ -116,6 +126,7 @@ flowchart TD
 
     OpponentService --> Provider
     StateExtractor --> Provider
+    CoachExtractor --> Provider
     Fake -.->|"implements"| Provider
     Bedrock -.->|"implements"| Provider
 ```
@@ -189,6 +200,13 @@ turn history before each opponent response. It records the latest user and
 opponent positions, agreements, open topics, unresolved items, and negotiation
 stage. The state supplements the raw history and is not persisted.
 
+### Coach observation
+
+CoachObservation contains evidence-based strengths, weaknesses, missed
+opportunities, risk signals, and a confidence value extracted from the ordered
+conversation. The coach analyzes only the user's behavior, does not participate
+in the negotiation, and does not persist observations.
+
 ## Technology stack
 
 - Python 3.12+
@@ -221,6 +239,7 @@ negotia/
 |   |   |-- exceptions.py
 |   |   `-- logging_config.py
 |   |-- domains/
+|   |   |-- coach/
 |   |   |-- negotiation/
 |   |   |-- negotiation_state/
 |   |   |-- negotiation_turn/
@@ -232,9 +251,11 @@ negotia/
 |   |   |-- fake.py
 |   |   `-- provider.py
 |   |-- prompts/
+|   |   |-- coach.py
 |   |   |-- negotiation_state.py
 |   |   `-- opponent.py
 |   |-- services/
+|   |   |-- coach.py
 |   |   |-- negotiation_state.py
 |   |   `-- opponent.py
 |   `-- main.py
@@ -355,9 +376,11 @@ uv run ruff format --check .
 - Repositories are in memory, so all data is lost when the application restarts.
 - Negotiation state is re-extracted for each opponent response and is not persisted
   or incrementally updated.
+- Coach observations are available only through the application service; no Coach
+  API or observation persistence is implemented.
 - Authentication and authorization are not implemented.
-- Coach, debrief, strategy, long-term memory, and adaptive difficulty features are
-  not implemented.
+- Debrief, strategy, long-term memory, and adaptive difficulty features are not
+  implemented.
 - Opponent quality depends on the selected provider, model, scenario data, and
   prompt design.
 - The current backend does not include a web frontend or durable database.
@@ -376,12 +399,13 @@ Completed:
 - [x] Scenario-aware opponent prompt builder
 - [x] Deterministic opponent behavior profiles by scenario difficulty
 - [x] LLM-assisted structured negotiation-state extraction
+- [x] Initial coach observation extractor and service
 - [x] Opponent service and opponent-response API
 
 Planned:
 
 - [ ] Richer multi-round opponent behavior
-- [ ] Coach, debrief, and strategy agents
+- [ ] Coach API, debrief, and strategy agents
 - [ ] Adaptive difficulty and long-term memory
 - [ ] Persistent database
 - [ ] Authentication and authorization

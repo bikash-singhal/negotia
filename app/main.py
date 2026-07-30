@@ -16,8 +16,10 @@ from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.repository import ScenarioRepository
 from app.domains.scenario.service import ScenarioService
 from app.llm.factory import build_llm_provider
+from app.prompts.coach import CoachPromptBuilder
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
+from app.services.coach import CoachObservationExtractor, CoachService
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
 
@@ -48,6 +50,11 @@ state_extractor = NegotiationStateExtractor(
     NegotiationStatePromptBuilder(),
     llm_provider,
 )
+coach_observation_extractor = CoachObservationExtractor(
+    CoachPromptBuilder(),
+    llm_provider,
+)
+coach_service = CoachService(coach_observation_extractor)
 app.state.scenario_service = ScenarioService(scenario_repository)
 app.state.negotiation_service = NegotiationService(
     negotiation_repository,
@@ -67,6 +74,7 @@ opponent_service = OpponentService(
     llm_provider,
 )
 app.state.opponent_service = opponent_service
+app.state.coach_service = coach_service
 
 register_exception_handlers(app)
 app.include_router(api_v1_router, prefix="/api/v1")
