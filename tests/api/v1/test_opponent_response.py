@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.domains.coach.repository import CoachObservationRepository
 from app.domains.debrief.repository import NegotiationDebriefRepository
+from app.domains.memory.repository import NegotiatorMemoryRepository
 from app.domains.negotiation.models import NegotiationSession, NegotiationStatus
 from app.domains.negotiation.repository import NegotiationRepository
 from app.domains.negotiation.service import NegotiationService
@@ -22,11 +23,13 @@ from app.llm.provider import LLMProvider
 from app.main import app
 from app.prompts.coach import CoachPromptBuilder
 from app.prompts.debrief import DebriefPromptBuilder
+from app.prompts.memory import MemoryPromptBuilder
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
 from app.prompts.strategy import StrategyPromptBuilder
 from app.services.coach import CoachObservationExtractor, CoachService
 from app.services.debrief import DebriefExtractor, DebriefService
+from app.services.memory import MemoryExtractor, MemoryService
 from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
@@ -68,7 +71,7 @@ def _build_coach_service(
 
 def _build_artifact_services(
     coach_repository: CoachObservationRepository,
-) -> tuple[DebriefService, StrategyService]:
+) -> tuple[DebriefService, StrategyService, MemoryService]:
     debrief_repository = NegotiationDebriefRepository()
     debrief_service = DebriefService(
         coach_repository,
@@ -78,15 +81,25 @@ def _build_artifact_services(
         ),
         debrief_repository,
     )
+    strategy_repository = NegotiationStrategyRepository()
     strategy_service = StrategyService(
         debrief_repository,
         StrategyExtractor(
             StrategyPromptBuilder(),
             FakeLLMProvider(),
         ),
-        NegotiationStrategyRepository(),
+        strategy_repository,
     )
-    return debrief_service, strategy_service
+    memory_service = MemoryService(
+        debrief_repository,
+        strategy_repository,
+        MemoryExtractor(
+            MemoryPromptBuilder(),
+            FakeLLMProvider(),
+        ),
+        NegotiatorMemoryRepository(),
+    )
+    return debrief_service, strategy_service, memory_service
 
 
 @pytest.fixture
@@ -116,6 +129,7 @@ def client(
         app.state.coach_service,
         app.state.debrief_service,
         app.state.strategy_service,
+        app.state.memory_service,
         app.state.negotiation_engine,
     )
     scenario_repository, negotiation_repository, turn_repository = repositories
@@ -140,11 +154,14 @@ def client(
         FakeLLMProvider(),
     )
     coach_service = _build_coach_service(coach_repository)
-    debrief_service, strategy_service = _build_artifact_services(coach_repository)
+    debrief_service, strategy_service, memory_service = _build_artifact_services(
+        coach_repository
+    )
     app.state.opponent_service = opponent_service
     app.state.coach_service = coach_service
     app.state.debrief_service = debrief_service
     app.state.strategy_service = strategy_service
+    app.state.memory_service = memory_service
     app.state.negotiation_engine = NegotiationEngine(
         opponent_service,
         coach_service,
@@ -152,6 +169,7 @@ def client(
         negotiation_turn_service,
         debrief_service,
         strategy_service,
+        memory_service,
     )
     try:
         with TestClient(app) as test_client:
@@ -165,6 +183,7 @@ def client(
             app.state.coach_service,
             app.state.debrief_service,
             app.state.strategy_service,
+            app.state.memory_service,
             app.state.negotiation_engine,
         ) = original_services
 
@@ -243,13 +262,16 @@ def _replace_opponent_provider(
         turn_repository,
         negotiation_repository,
     )
-    debrief_service, strategy_service = _build_artifact_services(coach_repository)
+    debrief_service, strategy_service, memory_service = _build_artifact_services(
+        coach_repository
+    )
     app.state.opponent_service = opponent_service
     app.state.coach_service = coach_service
     app.state.negotiation_service = negotiation_service
     app.state.negotiation_turn_service = negotiation_turn_service
     app.state.debrief_service = debrief_service
     app.state.strategy_service = strategy_service
+    app.state.memory_service = memory_service
     app.state.negotiation_engine = NegotiationEngine(
         opponent_service,
         coach_service,
@@ -257,6 +279,7 @@ def _replace_opponent_provider(
         negotiation_turn_service,
         debrief_service,
         strategy_service,
+        memory_service,
     )
 
 

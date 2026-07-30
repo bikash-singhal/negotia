@@ -1,7 +1,7 @@
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import UUID
 
 import pytest
@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 
 from app.domains.coach.repository import CoachObservationRepository
 from app.domains.debrief.repository import NegotiationDebriefRepository
-from app.domains.negotiation.models import NegotiationStatus
+from app.domains.memory.repository import NegotiatorMemoryRepository
+from app.domains.negotiation.models import NegotiationSession, NegotiationStatus
 from app.domains.negotiation.repository import NegotiationRepository
 from app.domains.negotiation.service import NegotiationService
 from app.domains.negotiation_turn.repository import NegotiationTurnRepository
@@ -23,11 +24,13 @@ from app.llm.provider import LLMProvider
 from app.main import app
 from app.prompts.coach import CoachPromptBuilder
 from app.prompts.debrief import DebriefPromptBuilder
+from app.prompts.memory import MemoryPromptBuilder
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
 from app.prompts.strategy import StrategyPromptBuilder
 from app.services.coach import CoachObservationExtractor, CoachService
 from app.services.debrief import DebriefExtractor, DebriefService
+from app.services.memory import MemoryExtractor, MemoryService
 from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
@@ -37,10 +40,13 @@ from app.services.strategy import StrategyExtractor, StrategyService
 @dataclass(frozen=True)
 class CompletionContext:
     negotiation_repository: NegotiationRepository
+    negotiation_service: NegotiationService
     debrief_repository: NegotiationDebriefRepository
     debrief_service: DebriefService
     strategy_repository: NegotiationStrategyRepository
     strategy_service: StrategyService
+    memory_repository: NegotiatorMemoryRepository
+    memory_service: MemoryService
     artifact_provider: MagicMock
 
 
@@ -64,6 +70,7 @@ def completion_context() -> Iterator[CompletionContext]:
         app.state.coach_service,
         app.state.debrief_service,
         app.state.strategy_service,
+        app.state.memory_service,
         app.state.negotiation_engine,
     )
     scenario_repository = ScenarioRepository()
@@ -72,6 +79,7 @@ def completion_context() -> Iterator[CompletionContext]:
     coach_repository = CoachObservationRepository()
     debrief_repository = NegotiationDebriefRepository()
     strategy_repository = NegotiationStrategyRepository()
+    memory_repository = NegotiatorMemoryRepository()
     fake_provider = FakeLLMProvider()
     artifact_provider = MagicMock(spec=LLMProvider, wraps=FakeLLMProvider())
     negotiation_service = NegotiationService(
@@ -105,6 +113,15 @@ def completion_context() -> Iterator[CompletionContext]:
         ),
         strategy_repository,
     )
+    memory_service = MemoryService(
+        debrief_repository,
+        strategy_repository,
+        MemoryExtractor(
+            MemoryPromptBuilder(),
+            artifact_provider,
+        ),
+        memory_repository,
+    )
     opponent_service = OpponentService(
         negotiation_repository,
         scenario_repository,
@@ -124,6 +141,7 @@ def completion_context() -> Iterator[CompletionContext]:
     app.state.coach_service = coach_service
     app.state.debrief_service = debrief_service
     app.state.strategy_service = strategy_service
+    app.state.memory_service = memory_service
     app.state.negotiation_engine = NegotiationEngine(
         opponent_service,
         coach_service,
@@ -131,14 +149,18 @@ def completion_context() -> Iterator[CompletionContext]:
         turn_service,
         debrief_service,
         strategy_service,
+        memory_service,
     )
     try:
         yield CompletionContext(
             negotiation_repository=negotiation_repository,
+            negotiation_service=negotiation_service,
             debrief_repository=debrief_repository,
             debrief_service=debrief_service,
             strategy_repository=strategy_repository,
             strategy_service=strategy_service,
+            memory_repository=memory_repository,
+            memory_service=memory_service,
             artifact_provider=artifact_provider,
         )
     finally:
@@ -150,6 +172,7 @@ def completion_context() -> Iterator[CompletionContext]:
             app.state.coach_service,
             app.state.debrief_service,
             app.state.strategy_service,
+            app.state.memory_service,
             app.state.negotiation_engine,
         ) = original_services
 
@@ -250,6 +273,19 @@ def _expected_strategy() -> dict[str, object]:
     }
 
 
+def _expected_memory(session_count: int = 2) -> dict[str, object]:
+    return {
+        "recurring_strengths": ["Uses conditional concessions."],
+        "recurring_weaknesses": ["Anchors before gathering information."],
+        "improving_skills": ["Concession planning"],
+        "persistent_risks": ["Makes unilateral concessions."],
+        "priority_focus_areas": ["Diagnostic questioning"],
+        "recommended_drills": ["Practice five discovery questions."],
+        "sessions_analyzed": session_count,
+        "confidence": "medium",
+    }
+
+
 def test_complete_negotiation_returns_structured_artifacts(
     client: TestClient,
 ) -> None:
@@ -270,6 +306,9 @@ def test_complete_negotiation_returns_structured_artifacts(
         "strategy",
         "strategy_id",
         "strategy_created_at",
+        "memory",
+        "memory_id",
+        "memory_created_at",
     }
     assert body["session_id"] == session["id"]
     assert body["status"] == "completed"
@@ -290,6 +329,9 @@ def test_complete_negotiation_returns_structured_artifacts(
         "confidence": "low",
     }
     assert body["strategy"] == _expected_strategy()
+    assert body["memory"] is None
+    assert body["memory_id"] is None
+    assert body["memory_created_at"] is None
     assert "strategy_debrief_id" not in body
 
     session_response = client.get(f"/api/v1/negotiations/{session['id']}")
@@ -306,6 +348,107 @@ def test_one_completed_exchange_is_sufficient(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert response.json()["observation_count"] == 1
+
+
+def test_second_completion_returns_populated_memory_fields(
+    client: TestClient,
+    completion_context: CompletionContext,
+) -> None:
+    first_session = _create_completed_exchange(client)
+    first_response = client.post(f"/api/v1/negotiations/{first_session['id']}/complete")
+    second_session = _create_completed_exchange(client)
+    completion_context.artifact_provider.generate.reset_mock()
+
+    response = client.post(f"/api/v1/negotiations/{second_session['id']}/complete")
+    body = response.json()
+
+    assert first_response.status_code == 200
+    assert first_response.json()["memory"] is None
+    assert response.status_code == 200
+    assert body["memory"] == _expected_memory()
+    assert _parse_uuid(body["memory_id"])
+    assert _parse_datetime(body["memory_created_at"]).utcoffset() == timedelta(0)
+    assert "trigger_session_id" not in body
+    assert "source_session_ids" not in body
+    memory_record = completion_context.memory_repository.get_by_trigger_session(
+        _parse_uuid(second_session["id"])
+    )
+    assert memory_record is not None
+    assert body["memory_id"] == str(memory_record.id)
+    assert _parse_datetime(body["memory_created_at"]) == memory_record.created_at
+    assert body["memory"] == memory_record.memory.model_dump(mode="json")
+    assert completion_context.artifact_provider.generate.call_count == 3
+
+
+def test_repeated_completion_returns_historical_memory_by_trigger(
+    client: TestClient,
+    completion_context: CompletionContext,
+) -> None:
+    first_session = _create_completed_exchange(client)
+    first_completion = client.post(
+        f"/api/v1/negotiations/{first_session['id']}/complete"
+    )
+    second_session = _create_completed_exchange(client)
+    second_completion = client.post(
+        f"/api/v1/negotiations/{second_session['id']}/complete"
+    )
+    second_body = second_completion.json()
+    completion_context.artifact_provider.generate.reset_mock()
+
+    repeated_first = client.post(f"/api/v1/negotiations/{first_session['id']}/complete")
+    repeated_second = client.post(
+        f"/api/v1/negotiations/{second_session['id']}/complete"
+    )
+
+    assert first_completion.status_code == 200
+    assert first_completion.json()["memory"] is None
+    assert second_completion.status_code == 200
+    assert repeated_first.status_code == 200
+    assert repeated_first.json()["memory"] is None
+    assert repeated_first.json()["memory_id"] is None
+    assert repeated_first.json()["memory_created_at"] is None
+    assert repeated_second.status_code == 200
+    assert repeated_second.json()["memory"] == second_body["memory"]
+    assert repeated_second.json()["memory_id"] == second_body["memory_id"]
+    assert (
+        repeated_second.json()["memory_created_at"] == second_body["memory_created_at"]
+    )
+    completion_context.artifact_provider.generate.assert_not_called()
+
+
+def test_later_completion_creates_new_memory_version(
+    client: TestClient,
+    completion_context: CompletionContext,
+) -> None:
+    first_session = _create_completed_exchange(client)
+    client.post(f"/api/v1/negotiations/{first_session['id']}/complete")
+    second_session = _create_completed_exchange(client)
+    second_response = client.post(
+        f"/api/v1/negotiations/{second_session['id']}/complete"
+    )
+    third_session = _create_completed_exchange(client)
+    third_response = client.post(f"/api/v1/negotiations/{third_session['id']}/complete")
+
+    assert second_response.status_code == 200
+    assert third_response.status_code == 200
+    second_memory_id = _parse_uuid(second_response.json()["memory_id"])
+    third_memory_id = _parse_uuid(third_response.json()["memory_id"])
+    assert second_memory_id != third_memory_id
+    versions = completion_context.memory_repository.list_all()
+    assert len(versions) == 2
+    assert versions[0].id == second_memory_id
+    assert versions[0].memory.sessions_analyzed == 2
+    assert versions[1].id == third_memory_id
+    assert versions[1].memory.sessions_analyzed == 3
+    assert versions[0].source_session_ids == tuple(
+        sorted(
+            (
+                _parse_uuid(first_session["id"]),
+                _parse_uuid(second_session["id"]),
+            ),
+            key=str,
+        )
+    )
 
 
 def test_completion_without_turns_returns_conflict(client: TestClient) -> None:
@@ -539,6 +682,118 @@ def test_strategy_failure_does_not_complete_session(
         is debrief_record
     )
     assert completion_context.strategy_repository.get_by_session(session_id) is None
+
+
+def test_memory_failure_preserves_artifacts_and_retry_reuses_them(
+    client: TestClient,
+    completion_context: CompletionContext,
+) -> None:
+    first_session = _create_completed_exchange(client)
+    first_completion = client.post(
+        f"/api/v1/negotiations/{first_session['id']}/complete"
+    )
+    assert first_completion.status_code == 200
+    second_session = _create_completed_exchange(client)
+    second_session_id = _parse_uuid(second_session["id"])
+    fake_provider = FakeLLMProvider()
+    expected_error = RuntimeError("Memory provider failed")
+
+    def fail_memory(
+        system_prompt: str,
+        user_prompt: str,
+    ) -> str:
+        if system_prompt.startswith("You are an expert negotiation memory analyst"):
+            raise expected_error
+        return fake_provider.generate(system_prompt, user_prompt)
+
+    completion_context.artifact_provider.generate.reset_mock()
+    completion_context.artifact_provider.generate.side_effect = fail_memory
+
+    failed_response = client.post(
+        f"/api/v1/negotiations/{second_session['id']}/complete"
+    )
+
+    assert failed_response.status_code == 500
+    persisted_session = completion_context.negotiation_repository.get(second_session_id)
+    assert persisted_session is not None
+    assert persisted_session.status is NegotiationStatus.CREATED
+    debrief_record = completion_context.debrief_repository.get_by_session(
+        second_session_id
+    )
+    strategy_record = completion_context.strategy_repository.get_by_session(
+        second_session_id
+    )
+    assert debrief_record is not None
+    assert strategy_record is not None
+    assert (
+        completion_context.memory_repository.get_by_trigger_session(second_session_id)
+        is None
+    )
+    assert completion_context.artifact_provider.generate.call_count == 3
+
+    completion_context.artifact_provider.generate.side_effect = None
+    completion_context.artifact_provider.generate.reset_mock()
+    retry_response = client.post(
+        f"/api/v1/negotiations/{second_session['id']}/complete"
+    )
+
+    assert retry_response.status_code == 200
+    assert (
+        completion_context.debrief_repository.get_by_session(second_session_id)
+        is debrief_record
+    )
+    assert (
+        completion_context.strategy_repository.get_by_session(second_session_id)
+        is strategy_record
+    )
+    assert retry_response.json()["memory"] == _expected_memory()
+    assert completion_context.artifact_provider.generate.call_count == 1
+
+
+def test_retry_after_status_failure_reuses_persisted_memory(
+    client: TestClient,
+    completion_context: CompletionContext,
+) -> None:
+    first_session = _create_completed_exchange(client)
+    first_completion = client.post(
+        f"/api/v1/negotiations/{first_session['id']}/complete"
+    )
+    assert first_completion.status_code == 200
+    second_session = _create_completed_exchange(client)
+    second_session_id = _parse_uuid(second_session["id"])
+    original_mark_completed = completion_context.negotiation_service.mark_completed
+    mark_attempts = 0
+
+    def fail_once(session_id: UUID) -> NegotiationSession:
+        nonlocal mark_attempts
+        mark_attempts += 1
+        if mark_attempts == 1:
+            raise RuntimeError("Status persistence failed")
+        return original_mark_completed(session_id)
+
+    completion_context.artifact_provider.generate.reset_mock()
+    with patch.object(
+        completion_context.negotiation_service,
+        "mark_completed",
+        side_effect=fail_once,
+    ):
+        failed_response = client.post(
+            f"/api/v1/negotiations/{second_session['id']}/complete"
+        )
+        memory_record = completion_context.memory_repository.get_by_trigger_session(
+            second_session_id
+        )
+        completion_context.artifact_provider.generate.reset_mock()
+        retry_response = client.post(
+            f"/api/v1/negotiations/{second_session['id']}/complete"
+        )
+
+    assert failed_response.status_code == 500
+    assert memory_record is not None
+    assert retry_response.status_code == 200
+    assert retry_response.json()["memory_id"] == str(memory_record.id)
+    assert len(completion_context.memory_repository.list_all()) == 1
+    completion_context.artifact_provider.generate.assert_not_called()
 
 
 def test_completed_session_without_debrief_returns_safe_internal_error(

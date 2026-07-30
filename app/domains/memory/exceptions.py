@@ -63,3 +63,12 @@ class InsufficientMemoryHistoryError(Exception):
         super().__init__(
             "Memory generation requires at least two completed negotiation sessions."
         )
+
+
+class NegotiatorMemoryAlreadyExistsError(Exception):
+    def __init__(self, trigger_session_id: UUID) -> None:
+        self.trigger_session_id = trigger_session_id
+        super().__init__(
+            "A negotiator Memory record already exists for completion trigger "
+            f"'{trigger_session_id}'."
+        )

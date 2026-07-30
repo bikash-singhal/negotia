@@ -52,12 +52,14 @@ def test_memory_record_is_immutable_and_stores_aware_timestamp() -> None:
     created_at = datetime.now(UTC)
     record = NegotiatorMemoryRecord(
         id=uuid4(),
+        trigger_session_id=uuid4(),
         memory=NegotiatorMemory.model_validate(_valid_memory_data()),
         source_session_ids=(uuid4(), uuid4()),
         created_at=created_at,
     )
 
     assert record.created_at.utcoffset() == timedelta(0)
+    assert record.trigger_session_id is not None
     timestamp_attribute = "created_at"
     with pytest.raises(FrozenInstanceError):
         setattr(record, timestamp_attribute, datetime.now(UTC))

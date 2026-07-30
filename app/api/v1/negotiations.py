@@ -62,6 +62,7 @@ def complete_negotiation(
 
     debrief_record = result.debrief_record
     strategy_record = result.strategy_record
+    memory_record = result.memory_record
     return NegotiationCompletionResponse(
         session_id=result.session.id,
         status=result.session.status,
@@ -73,6 +74,11 @@ def complete_negotiation(
         strategy=NegotiationStrategyResponse.model_validate(strategy_record.strategy),
         strategy_id=strategy_record.id,
         strategy_created_at=strategy_record.created_at,
+        memory=memory_record.memory if memory_record is not None else None,
+        memory_id=memory_record.id if memory_record is not None else None,
+        memory_created_at=(
+            memory_record.created_at if memory_record is not None else None
+        ),
     )
 
 

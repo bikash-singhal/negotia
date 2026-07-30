@@ -121,6 +121,52 @@ class MemoryService:
         self._memory_repository = memory_repository
 
     def generate(self) -> NegotiatorMemoryRecord:
+        debrief_records, strategy_records = self._load_artifact_history()
+        if len(strategy_records) < 2:
+            raise InsufficientMemoryHistoryError(len(strategy_records))
+
+        return self._extract_and_persist(
+            debrief_records,
+            strategy_records,
+            trigger_session_id=None,
+        )
+
+    def generate_for_session(
+        self,
+        session_id: UUID,
+    ) -> NegotiatorMemoryRecord | None:
+        existing_record = self._memory_repository.get_by_trigger_session(session_id)
+        if existing_record is not None:
+            return existing_record
+
+        debrief_records, strategy_records = self._load_artifact_history()
+        if len(strategy_records) < 2:
+            return None
+
+        return self._extract_and_persist(
+            debrief_records,
+            strategy_records,
+            trigger_session_id=session_id,
+        )
+
+    def get_by_trigger_session(
+        self,
+        session_id: UUID,
+    ) -> NegotiatorMemoryRecord | None:
+        return self._memory_repository.get_by_trigger_session(session_id)
+
+    def get_latest(self) -> NegotiatorMemoryRecord | None:
+        return self._memory_repository.get_latest()
+
+    def list_versions(self) -> list[NegotiatorMemoryRecord]:
+        return self._memory_repository.list_all()
+
+    def _load_artifact_history(
+        self,
+    ) -> tuple[
+        list[NegotiationDebriefRecord],
+        list[NegotiationStrategyRecord],
+    ]:
         strategy_records = self._strategy_repository.list_all()
         debrief_records: list[NegotiationDebriefRecord] = []
         for strategy_record in strategy_records:
@@ -130,10 +176,14 @@ class MemoryService:
             if debrief_record is None:
                 raise MismatchedMemoryArtifactSetError()
             debrief_records.append(debrief_record)
+        return debrief_records, strategy_records
 
-        if len(strategy_records) < 2:
-            raise InsufficientMemoryHistoryError(len(strategy_records))
-
+    def _extract_and_persist(
+        self,
+        debrief_records: list[NegotiationDebriefRecord],
+        strategy_records: list[NegotiationStrategyRecord],
+        trigger_session_id: UUID | None,
+    ) -> NegotiatorMemoryRecord:
         memory = self._extractor.extract(debrief_records, strategy_records)
         source_session_ids = tuple(
             sorted(
@@ -143,14 +193,9 @@ class MemoryService:
         )
         record = NegotiatorMemoryRecord(
             id=uuid4(),
+            trigger_session_id=trigger_session_id,
             memory=memory,
             source_session_ids=source_session_ids,
             created_at=datetime.now(UTC),
         )
         return self._memory_repository.create(record)
-
-    def get_latest(self) -> NegotiatorMemoryRecord | None:
-        return self._memory_repository.get_latest()
-
-    def list_versions(self) -> list[NegotiatorMemoryRecord]:
-        return self._memory_repository.list_all()

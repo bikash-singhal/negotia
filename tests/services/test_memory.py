@@ -350,6 +350,7 @@ def test_service_generates_and_persists_version_from_two_matched_sessions() -> N
 
     assert isinstance(result, NegotiatorMemoryRecord)
     assert isinstance(result.id, UUID)
+    assert result.trigger_session_id is None
     assert result.memory is memory
     assert result.source_session_ids == (
         first_session_id,
@@ -360,6 +361,170 @@ def test_service_generates_and_persists_version_from_two_matched_sessions() -> N
     assert memory_repository.get_latest() is result
     assert memory_repository.list_all() == [result]
     extractor.extract.assert_called_once_with(debriefs, strategies)
+
+
+def test_generate_for_session_returns_none_with_one_matched_session() -> None:
+    trigger_session_id = uuid4()
+    debriefs, strategies = _create_matched_records(trigger_session_id)
+    debrief_repository = MagicMock(spec=NegotiationDebriefRepository)
+    debrief_repository.get_by_session.return_value = debriefs[0]
+    strategy_repository = MagicMock(spec=NegotiationStrategyRepository)
+    strategy_repository.list_all.return_value = strategies
+    extractor = MagicMock(spec=MemoryExtractor)
+    memory_repository = MagicMock(spec=NegotiatorMemoryRepository)
+    memory_repository.get_by_trigger_session.return_value = None
+    service = MemoryService(
+        debrief_repository,
+        strategy_repository,
+        extractor,
+        memory_repository,
+    )
+
+    result = service.generate_for_session(trigger_session_id)
+
+    assert result is None
+    extractor.extract.assert_not_called()
+    memory_repository.create.assert_not_called()
+
+
+def test_generate_for_session_persists_completion_lineage() -> None:
+    first_session_id = UUID("00000000-0000-0000-0000-000000000001")
+    trigger_session_id = UUID("00000000-0000-0000-0000-000000000002")
+    debriefs, strategies = _create_matched_records(
+        trigger_session_id,
+        first_session_id,
+    )
+    debrief_repository = NegotiationDebriefRepository()
+    strategy_repository = NegotiationStrategyRepository()
+    for debrief in debriefs:
+        debrief_repository.create(debrief)
+    for strategy in strategies:
+        strategy_repository.create(strategy)
+    extractor = MagicMock(spec=MemoryExtractor)
+    extractor.extract.return_value = _valid_memory()
+    memory_repository = NegotiatorMemoryRepository()
+    service = MemoryService(
+        debrief_repository,
+        strategy_repository,
+        extractor,
+        memory_repository,
+    )
+
+    result = service.generate_for_session(trigger_session_id)
+
+    assert result is not None
+    assert result.trigger_session_id == trigger_session_id
+    assert result.source_session_ids == (
+        first_session_id,
+        trigger_session_id,
+    )
+    assert memory_repository.get_by_trigger_session(trigger_session_id) is result
+    assert result.created_at.utcoffset() == timedelta(0)
+
+
+def test_generate_allows_multiple_standalone_versions_without_lineage() -> None:
+    debriefs, strategies = _create_matched_records(uuid4(), uuid4())
+    debrief_repository = NegotiationDebriefRepository()
+    strategy_repository = NegotiationStrategyRepository()
+    for debrief in debriefs:
+        debrief_repository.create(debrief)
+    for strategy in strategies:
+        strategy_repository.create(strategy)
+    extractor = MagicMock(spec=MemoryExtractor)
+    extractor.extract.return_value = _valid_memory()
+    memory_repository = NegotiatorMemoryRepository()
+    service = MemoryService(
+        debrief_repository,
+        strategy_repository,
+        extractor,
+        memory_repository,
+    )
+
+    first = service.generate()
+    second = service.generate()
+
+    assert first.trigger_session_id is None
+    assert second.trigger_session_id is None
+    assert first.id != second.id
+    assert memory_repository.list_all() == [first, second]
+    assert extractor.extract.call_count == 2
+
+
+def test_generate_for_session_reuses_trigger_record_without_extraction() -> None:
+    trigger_session_id = uuid4()
+    expected_record = NegotiatorMemoryRecord(
+        id=uuid4(),
+        trigger_session_id=trigger_session_id,
+        memory=_valid_memory(),
+        source_session_ids=(uuid4(), trigger_session_id),
+        created_at=datetime.now(UTC),
+    )
+    debrief_repository = MagicMock(spec=NegotiationDebriefRepository)
+    strategy_repository = MagicMock(spec=NegotiationStrategyRepository)
+    extractor = MagicMock(spec=MemoryExtractor)
+    memory_repository = MagicMock(spec=NegotiatorMemoryRepository)
+    memory_repository.get_by_trigger_session.return_value = expected_record
+    service = MemoryService(
+        debrief_repository,
+        strategy_repository,
+        extractor,
+        memory_repository,
+    )
+
+    result = service.generate_for_session(trigger_session_id)
+
+    assert result is expected_record
+    memory_repository.get_by_trigger_session.assert_called_once_with(trigger_session_id)
+    strategy_repository.list_all.assert_not_called()
+    debrief_repository.get_by_session.assert_not_called()
+    extractor.extract.assert_not_called()
+    memory_repository.create.assert_not_called()
+
+
+def test_later_completion_creates_new_immutable_memory_version() -> None:
+    first_session_id = UUID("00000000-0000-0000-0000-000000000001")
+    second_session_id = UUID("00000000-0000-0000-0000-000000000002")
+    third_session_id = UUID("00000000-0000-0000-0000-000000000003")
+    debrief_repository = NegotiationDebriefRepository()
+    strategy_repository = NegotiationStrategyRepository()
+    memory_repository = NegotiatorMemoryRepository()
+    extractor = MagicMock(spec=MemoryExtractor)
+    extractor.extract.side_effect = [
+        _valid_memory(),
+        _valid_memory().model_copy(update={"sessions_analyzed": 3}),
+    ]
+    service = MemoryService(
+        debrief_repository,
+        strategy_repository,
+        extractor,
+        memory_repository,
+    )
+    for session_id in (first_session_id, second_session_id):
+        debrief = _create_debrief_record(session_id)
+        debrief_repository.create(debrief)
+        strategy_repository.create(_create_strategy_record(session_id, debrief.id))
+
+    second_memory = service.generate_for_session(second_session_id)
+    third_debrief = _create_debrief_record(third_session_id)
+    debrief_repository.create(third_debrief)
+    strategy_repository.create(
+        _create_strategy_record(third_session_id, third_debrief.id)
+    )
+    third_memory = service.generate_for_session(third_session_id)
+
+    assert second_memory is not None
+    assert third_memory is not None
+    assert second_memory is not third_memory
+    assert second_memory.source_session_ids == (
+        first_session_id,
+        second_session_id,
+    )
+    assert third_memory.source_session_ids == (
+        first_session_id,
+        second_session_id,
+        third_session_id,
+    )
+    assert memory_repository.list_all() == [second_memory, third_memory]
 
 
 def test_service_does_not_persist_when_extraction_fails() -> None:
@@ -393,6 +558,7 @@ def test_get_latest_and_list_versions_delegate_to_memory_repository() -> None:
     memory_repository = MagicMock(spec=NegotiatorMemoryRepository)
     expected_record = NegotiatorMemoryRecord(
         id=uuid4(),
+        trigger_session_id=None,
         memory=_valid_memory(),
         source_session_ids=(uuid4(), uuid4()),
         created_at=datetime.now(UTC),
@@ -410,6 +576,33 @@ def test_get_latest_and_list_versions_delegate_to_memory_repository() -> None:
     assert service.list_versions() == [expected_record]
     memory_repository.get_latest.assert_called_once_with()
     memory_repository.list_all.assert_called_once_with()
+
+
+def test_get_by_trigger_session_delegates_to_memory_repository() -> None:
+    trigger_session_id = uuid4()
+    expected_record = NegotiatorMemoryRecord(
+        id=uuid4(),
+        trigger_session_id=trigger_session_id,
+        memory=_valid_memory(),
+        source_session_ids=(uuid4(), trigger_session_id),
+        created_at=datetime.now(UTC),
+    )
+    debrief_repository = MagicMock(spec=NegotiationDebriefRepository)
+    strategy_repository = MagicMock(spec=NegotiationStrategyRepository)
+    extractor = MagicMock(spec=MemoryExtractor)
+    memory_repository = MagicMock(spec=NegotiatorMemoryRepository)
+    memory_repository.get_by_trigger_session.return_value = expected_record
+    service = MemoryService(
+        debrief_repository,
+        strategy_repository,
+        extractor,
+        memory_repository,
+    )
+
+    result = service.get_by_trigger_session(trigger_session_id)
+
+    assert result is expected_record
+    memory_repository.get_by_trigger_session.assert_called_once_with(trigger_session_id)
 
 
 def test_service_has_only_confirmed_dependencies() -> None:

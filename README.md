@@ -12,7 +12,8 @@ Create scenario
 → submit user turn
 → generate AI opponent response
 → retrieve ordered conversation history
-→ explicitly complete the negotiation and receive a structured debrief and strategy
+→ explicitly complete the negotiation and receive a structured debrief, strategy,
+  and optional cross-session Memory
 ```
 
 Standalone Coach, debrief, strategy, and memory APIs plus adaptive-difficulty
@@ -32,10 +33,10 @@ and does not call AWS. The Bedrock provider is also implemented and can be selec
 through environment configuration. DebriefService synthesizes patterns from
 stored coach observations only when a client explicitly completes a negotiation.
 StrategyService then turns that persisted debrief into actionable recommendations.
-The completion response includes both persisted artifacts. Neither artifact has a
-standalone API. An isolated MemoryService can synthesize immutable, versioned
-single-user negotiator profiles from at least two persisted Debrief/Strategy
-pairs. Memory is not called by completion or exposed through an API.
+MemoryService then generates or reuses an immutable single-user negotiator profile
+when at least two persisted Debrief/Strategy pairs exist. The completion response
+includes the Debrief, Strategy, and optional historically associated Memory.
+None of these artifacts has a standalone API.
 
 ## Current functionality
 
@@ -46,8 +47,8 @@ pairs. Memory is not called by completion or exposed through an API.
 - Ordered turn history for each negotiation session
 - AI opponent-response generation
 - Explicit user-triggered negotiation completion
-- Idempotent completion responses with stable debrief and strategy identifiers
-  and timestamps
+- Idempotent completion responses with stable Debrief, Strategy, and optional
+  Memory identifiers and timestamps
 - Deterministic orchestration through NegotiationEngine
 - Validation that an opponent response follows a user turn
 - LLM-assisted structured negotiation-state extraction
@@ -187,6 +188,7 @@ flowchart TD
     Engine -->|"validate ordered turns"| TurnService
     Engine -->|"retrieve or generate debrief"| DebriefService
     Engine -->|"retrieve or generate strategy"| StrategyService
+    Engine -->|"retrieve or generate eligible memory"| MemoryService
     Engine -->|"mark completed"| SessionService
 
     Config --> Factory
@@ -212,10 +214,11 @@ only after an explicit completion request passes session and turn validation.
 StrategyService reads only a persisted NegotiationDebriefRecord and stores at most
 one strategy per session. NegotiationEngine invokes it after the debrief is
 available and before marking the session completed.
-MemoryService is wired independently at application startup. It lists persisted
-strategies, resolves the corresponding debriefs by session ID, requires at least
-two complete pairs, and stores each generated profile as a new immutable version.
-NegotiationEngine has no Memory dependency.
+MemoryService lists persisted strategies, resolves the corresponding debriefs by
+session ID, and stores each eligible profile as a new immutable version.
+NegotiationEngine invokes it after Strategy is available and before marking the
+session completed. Each completion-triggered version is associated internally
+with its triggering session.
 
 ## End-to-end opponent workflow
 
@@ -251,10 +254,14 @@ NegotiationEngine has no Memory dependency.
    CoachObservationRecords.
 4. StrategyService reuses an existing strategy or generates one only from the
    persisted debrief.
-5. NegotiationService transitions `created` or `active` to `completed` and updates
+5. MemoryService reuses the Memory associated with this completion, generates a
+   new version when at least two complete artifact pairs exist, or returns no
+   Memory when history is still insufficient.
+6. NegotiationService transitions `created` or `active` to `completed` and updates
    `updated_at`, which is returned as `completed_at`.
-6. Repeated completion calls return the original timestamp, debrief, and strategy
-   without revalidating turns or calling the LLM again.
+7. Repeated completion calls return the original timestamp, Debrief, Strategy,
+   and historically associated optional Memory without revalidating turns or
+   calling the LLM again.
 
 Illustrative conversation:
 
@@ -339,7 +346,11 @@ skills, persistent risks, priority focus areas, and recommended drills using onl
 persisted NegotiationDebriefRecord and NegotiationStrategyRecord pairs. Each
 NegotiatorMemoryRecord stores the sorted source session IDs and a UTC creation
 time. Records form an append-only version history for the current single-user
-MVP. Memory is not generated during completion and has no public endpoint.
+MVP. Completion generates a version only when at least two complete artifact
+pairs exist, so the first eligible negotiation can return no Memory. Each
+completion-triggered record retains internal trigger lineage, and repeated
+completion returns that historical version rather than the latest global one.
+Memory still has no public endpoint.
 
 ## Technology stack
 
@@ -482,7 +493,7 @@ The API is available at `http://127.0.0.1:8000`.
 | `GET` | `/api/v1/turns/{turn_id}` | Retrieve a turn. |
 | `GET` | `/api/v1/negotiations/{session_id}/turns` | Retrieve ordered session history. |
 | `POST` | `/api/v1/negotiations/{session_id}/opponent-response` | Generate and store the next opponent turn. |
-| `POST` | `/api/v1/negotiations/{session_id}/complete` | Explicitly complete a negotiation and return its persisted debrief and strategy. |
+| `POST` | `/api/v1/negotiations/{session_id}/complete` | Explicitly complete a negotiation and return its persisted Debrief, Strategy, and optional Memory. |
 
 The opponent-response endpoint requires an existing user turn. It returns `409`
 when there is no user turn or when the latest turn already belongs to the
@@ -534,7 +545,7 @@ uv run ruff format --check .
   persisted before a later completion step failed.
 - Strategies are persisted only in memory and have no standalone retrieval API.
 - Negotiator Memory is versioned only in memory, is scoped to the single-user MVP,
-  and has no API or automatic completion integration.
+  and has no standalone API.
 - Authentication and authorization are not implemented.
 - Adaptive difficulty is not implemented.
 - Opponent quality depends on the selected provider, model, scenario data, and
@@ -563,6 +574,7 @@ Completed:
 - [x] Standalone structured Strategy extraction and in-memory persistence
 - [x] Strategy integration with negotiation completion
 - [x] Isolated cross-session negotiator Memory extraction and version persistence
+- [x] Trigger-linked Memory integration with explicit negotiation completion
 
 Planned:
 

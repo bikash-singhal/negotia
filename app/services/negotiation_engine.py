@@ -3,6 +3,7 @@ from itertools import pairwise
 from uuid import UUID
 
 from app.domains.debrief.models import NegotiationDebriefRecord
+from app.domains.memory.models import NegotiatorMemoryRecord
 from app.domains.negotiation.exceptions import (
     CompletedNegotiationMissingDebriefError,
     CompletedNegotiationMissingStrategyError,
@@ -20,6 +21,7 @@ from app.domains.negotiation_turn.service import NegotiationTurnService
 from app.domains.strategy.models import NegotiationStrategyRecord
 from app.services.coach import CoachService
 from app.services.debrief import DebriefService
+from app.services.memory import MemoryService
 from app.services.opponent import OpponentService
 from app.services.strategy import StrategyService
 
@@ -29,6 +31,7 @@ class NegotiationCompletionResult:
     session: NegotiationSession
     debrief_record: NegotiationDebriefRecord
     strategy_record: NegotiationStrategyRecord
+    memory_record: NegotiatorMemoryRecord | None
 
 
 class NegotiationEngine:
@@ -40,6 +43,7 @@ class NegotiationEngine:
         negotiation_turn_service: NegotiationTurnService,
         debrief_service: DebriefService,
         strategy_service: StrategyService,
+        memory_service: MemoryService,
     ) -> None:
         self._opponent_service = opponent_service
         self._coach_service = coach_service
@@ -47,6 +51,7 @@ class NegotiationEngine:
         self._negotiation_turn_service = negotiation_turn_service
         self._debrief_service = debrief_service
         self._strategy_service = strategy_service
+        self._memory_service = memory_service
 
     def generate_response(self, session_id: UUID) -> NegotiationTurn:
         result = self._opponent_service.generate_response(session_id)
@@ -70,10 +75,12 @@ class NegotiationEngine:
             existing_strategy = self._strategy_service.get_for_session(session_id)
             if existing_strategy is None:
                 raise CompletedNegotiationMissingStrategyError(session_id)
+            existing_memory = self._memory_service.get_by_trigger_session(session_id)
             return NegotiationCompletionResult(
                 session,
                 existing_debrief,
                 existing_strategy,
+                existing_memory,
             )
 
         turns = self._negotiation_turn_service.list_turns(session_id)
@@ -87,11 +94,14 @@ class NegotiationEngine:
         if strategy_record is None:
             strategy_record = self._strategy_service.generate_for_session(session_id)
 
+        memory_record = self._memory_service.generate_for_session(session_id)
+
         completed_session = self._negotiation_service.mark_completed(session_id)
         return NegotiationCompletionResult(
             completed_session,
             debrief_record,
             strategy_record,
+            memory_record,
         )
 
     @staticmethod

@@ -78,7 +78,7 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert memory_service._memory_repository is memory_repository
     assert app.state.memory_service is memory_service
     assert not hasattr(app.state, "memory_repository")
-    assert not hasattr(negotiation_engine, "_memory_service")
+    assert negotiation_engine._memory_service is memory_service
 
 
 def test_app_has_no_debrief_endpoint() -> None:

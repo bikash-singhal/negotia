@@ -1,13 +1,20 @@
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+import pytest
+
+from app.domains.memory.exceptions import NegotiatorMemoryAlreadyExistsError
 from app.domains.memory.models import NegotiatorMemory, NegotiatorMemoryRecord
 from app.domains.memory.repository import NegotiatorMemoryRepository
 
 
-def _create_record(sessions_analyzed: int = 2) -> NegotiatorMemoryRecord:
+def _create_record(
+    sessions_analyzed: int = 2,
+    trigger_session_id: UUID | None = None,
+) -> NegotiatorMemoryRecord:
     return NegotiatorMemoryRecord(
         id=uuid4(),
+        trigger_session_id=trigger_session_id,
         memory=NegotiatorMemory(
             recurring_strengths=[],
             recurring_weaknesses=[],
@@ -60,3 +67,37 @@ def test_list_all_returns_defensive_list_copy() -> None:
     versions.clear()
 
     assert repository.list_all() == [record]
+
+
+def test_get_by_trigger_session_returns_completion_record_only() -> None:
+    repository = NegotiatorMemoryRepository()
+    trigger_session_id = uuid4()
+    standalone = repository.create(_create_record())
+    completion_record = repository.create(
+        _create_record(trigger_session_id=trigger_session_id)
+    )
+
+    assert repository.get_by_trigger_session(trigger_session_id) is completion_record
+    assert repository.get_by_trigger_session(standalone.source_session_ids[0]) is None
+
+
+def test_duplicate_completion_trigger_is_rejected() -> None:
+    repository = NegotiatorMemoryRepository()
+    trigger_session_id = uuid4()
+    original = repository.create(_create_record(trigger_session_id=trigger_session_id))
+
+    with pytest.raises(NegotiatorMemoryAlreadyExistsError) as exc_info:
+        repository.create(_create_record(trigger_session_id=trigger_session_id))
+
+    assert exc_info.value.trigger_session_id == trigger_session_id
+    assert repository.get_by_trigger_session(trigger_session_id) is original
+    assert repository.list_all() == [original]
+
+
+def test_multiple_standalone_versions_are_allowed() -> None:
+    repository = NegotiatorMemoryRepository()
+    first = repository.create(_create_record())
+    second = repository.create(_create_record())
+
+    assert repository.list_all() == [first, second]
+    assert repository.get_latest() is second

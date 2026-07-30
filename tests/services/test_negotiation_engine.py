@@ -10,6 +10,7 @@ from app.domains.debrief.models import (
     NegotiationDebrief,
     NegotiationDebriefRecord,
 )
+from app.domains.memory.models import NegotiatorMemory, NegotiatorMemoryRecord
 from app.domains.negotiation.exceptions import (
     CompletedNegotiationMissingDebriefError,
     CompletedNegotiationMissingStrategyError,
@@ -30,6 +31,7 @@ from app.domains.strategy.models import (
 )
 from app.services.coach import CoachService
 from app.services.debrief import DebriefService
+from app.services.memory import MemoryService
 from app.services.negotiation_engine import (
     NegotiationCompletionResult,
     NegotiationEngine,
@@ -65,6 +67,7 @@ def _build_engine(
         MagicMock(spec=NegotiationTurnService),
         MagicMock(spec=DebriefService),
         MagicMock(spec=StrategyService),
+        MagicMock(spec=MemoryService),
     )
 
 
@@ -119,11 +122,31 @@ def _create_strategy_record(
     )
 
 
+def _create_memory_record(session_id: UUID) -> NegotiatorMemoryRecord:
+    return NegotiatorMemoryRecord(
+        id=uuid4(),
+        trigger_session_id=session_id,
+        memory=NegotiatorMemory(
+            recurring_strengths=[],
+            recurring_weaknesses=[],
+            improving_skills=[],
+            persistent_risks=[],
+            priority_focus_areas=[],
+            recommended_drills=[],
+            sessions_analyzed=2,
+            confidence="low",
+        ),
+        source_session_ids=(uuid4(), session_id),
+        created_at=datetime.now(UTC),
+    )
+
+
 def _build_completion_engine(
     session: NegotiationSession,
     turns: list[NegotiationTurn],
 ) -> tuple[
     NegotiationEngine,
+    MagicMock,
     MagicMock,
     MagicMock,
     MagicMock,
@@ -136,6 +159,9 @@ def _build_completion_engine(
     turn_service.list_turns.return_value = turns
     debrief_service = MagicMock(spec=DebriefService)
     strategy_service = MagicMock(spec=StrategyService)
+    memory_service = MagicMock(spec=MemoryService)
+    memory_service.generate_for_session.return_value = None
+    memory_service.get_by_trigger_session.return_value = None
     engine = NegotiationEngine(
         MagicMock(spec=OpponentService),
         MagicMock(spec=CoachService),
@@ -143,6 +169,7 @@ def _build_completion_engine(
         turn_service,
         debrief_service,
         strategy_service,
+        memory_service,
     )
     return (
         engine,
@@ -150,6 +177,7 @@ def _build_completion_engine(
         turn_service,
         debrief_service,
         strategy_service,
+        memory_service,
     )
 
 
@@ -344,6 +372,7 @@ def test_completion_persists_debrief_then_strategy_then_marks_completed() -> Non
         turn_service,
         debrief_service,
         strategy_service,
+        memory_service,
     ) = _build_completion_engine(session, [user_turn, opponent_turn])
     debrief_record = _create_debrief_record(session.id)
     strategy_record = _create_strategy_record(session.id, debrief_record.id)
@@ -366,6 +395,9 @@ def test_completion_persists_debrief_then_strategy_then_marks_completed() -> Non
     strategy_service.generate_for_session.side_effect = lambda received_id: (
         call_order.append("strategy generation") or strategy_record
     )
+    memory_service.generate_for_session.side_effect = lambda received_id: (
+        call_order.append("memory processing") or None
+    )
 
     def mark_completed(received_id: UUID) -> NegotiationSession:
         call_order.append("completion")
@@ -380,6 +412,7 @@ def test_completion_persists_debrief_then_strategy_then_marks_completed() -> Non
     assert result.session is session
     assert result.debrief_record is debrief_record
     assert result.strategy_record is strategy_record
+    assert result.memory_record is None
     assert call_order == [
         "session",
         "turns",
@@ -387,6 +420,7 @@ def test_completion_persists_debrief_then_strategy_then_marks_completed() -> Non
         "debrief generation",
         "strategy lookup",
         "strategy generation",
+        "memory processing",
         "completion",
     ]
     negotiation_service.validate_completion_transition.assert_called_once_with(
@@ -397,6 +431,7 @@ def test_completion_persists_debrief_then_strategy_then_marks_completed() -> Non
     debrief_service.generate_for_session.assert_called_once_with(session.id)
     strategy_service.get_for_session.assert_called_once_with(session.id)
     strategy_service.generate_for_session.assert_called_once_with(session.id)
+    memory_service.generate_for_session.assert_called_once_with(session.id)
     negotiation_service.mark_completed.assert_called_once_with(session.id)
 
 
@@ -408,6 +443,7 @@ def test_completion_rejects_session_without_turns_before_debrief() -> None:
         _,
         debrief_service,
         strategy_service,
+        memory_service,
     ) = _build_completion_engine(session, [])
 
     with pytest.raises(NegotiationCompletionWithoutTurnsError):
@@ -417,6 +453,7 @@ def test_completion_rejects_session_without_turns_before_debrief() -> None:
     debrief_service.generate_for_session.assert_not_called()
     strategy_service.get_for_session.assert_not_called()
     strategy_service.generate_for_session.assert_not_called()
+    memory_service.generate_for_session.assert_not_called()
     negotiation_service.mark_completed.assert_not_called()
 
 
@@ -434,6 +471,7 @@ def test_completion_rejects_latest_user_turn_before_debrief() -> None:
         _,
         debrief_service,
         strategy_service,
+        memory_service,
     ) = _build_completion_engine(session, [user_turn])
 
     with pytest.raises(NegotiationCompletionLatestTurnFromUserError):
@@ -443,6 +481,7 @@ def test_completion_rejects_latest_user_turn_before_debrief() -> None:
     debrief_service.generate_for_session.assert_not_called()
     strategy_service.get_for_session.assert_not_called()
     strategy_service.generate_for_session.assert_not_called()
+    memory_service.generate_for_session.assert_not_called()
     negotiation_service.mark_completed.assert_not_called()
 
 
@@ -466,6 +505,7 @@ def test_completion_requires_adjacent_user_opponent_exchange() -> None:
         _,
         debrief_service,
         strategy_service,
+        memory_service,
     ) = _build_completion_engine(
         session,
         [first_opponent_turn, second_opponent_turn],
@@ -476,6 +516,7 @@ def test_completion_requires_adjacent_user_opponent_exchange() -> None:
 
     debrief_service.generate_for_session.assert_not_called()
     strategy_service.generate_for_session.assert_not_called()
+    memory_service.generate_for_session.assert_not_called()
     negotiation_service.mark_completed.assert_not_called()
 
 
@@ -501,6 +542,7 @@ def test_completion_does_not_mark_session_when_debrief_generation_fails() -> Non
         _,
         debrief_service,
         strategy_service,
+        memory_service,
     ) = _build_completion_engine(session, turns)
     expected_error = NoCoachObservationsError()
     debrief_service.get_for_session.return_value = None
@@ -512,6 +554,7 @@ def test_completion_does_not_mark_session_when_debrief_generation_fails() -> Non
     assert exc_info.value is expected_error
     strategy_service.get_for_session.assert_not_called()
     strategy_service.generate_for_session.assert_not_called()
+    memory_service.generate_for_session.assert_not_called()
     negotiation_service.mark_completed.assert_not_called()
 
 
@@ -537,6 +580,7 @@ def test_completion_reuses_existing_debrief_for_recovery() -> None:
         _,
         debrief_service,
         strategy_service,
+        memory_service,
     ) = _build_completion_engine(session, turns)
     debrief_record = _create_debrief_record(session.id)
     strategy_record = _create_strategy_record(session.id, debrief_record.id)
@@ -554,6 +598,7 @@ def test_completion_reuses_existing_debrief_for_recovery() -> None:
     assert result.session.status is NegotiationStatus.COMPLETED
     debrief_service.generate_for_session.assert_not_called()
     strategy_service.generate_for_session.assert_called_once_with(session.id)
+    memory_service.generate_for_session.assert_called_once_with(session.id)
     negotiation_service.mark_completed.assert_called_once_with(session.id)
 
 
@@ -579,6 +624,7 @@ def test_completion_does_not_mark_session_when_strategy_generation_fails() -> No
         _,
         debrief_service,
         strategy_service,
+        memory_service,
     ) = _build_completion_engine(session, turns)
     debrief_record = _create_debrief_record(session.id)
     debrief_service.get_for_session.return_value = None
@@ -592,6 +638,7 @@ def test_completion_does_not_mark_session_when_strategy_generation_fails() -> No
 
     assert exc_info.value is expected_error
     debrief_service.generate_for_session.assert_called_once_with(session.id)
+    memory_service.generate_for_session.assert_not_called()
     negotiation_service.mark_completed.assert_not_called()
 
 
@@ -617,6 +664,7 @@ def test_completion_reuses_existing_debrief_and_strategy_for_recovery() -> None:
         _,
         debrief_service,
         strategy_service,
+        memory_service,
     ) = _build_completion_engine(session, turns)
     debrief_record = _create_debrief_record(session.id)
     strategy_record = _create_strategy_record(session.id, debrief_record.id)
@@ -633,6 +681,7 @@ def test_completion_reuses_existing_debrief_and_strategy_for_recovery() -> None:
     assert result.session.status is NegotiationStatus.COMPLETED
     debrief_service.generate_for_session.assert_not_called()
     strategy_service.generate_for_session.assert_not_called()
+    memory_service.generate_for_session.assert_called_once_with(session.id)
     negotiation_service.mark_completed.assert_called_once_with(session.id)
 
 
@@ -645,11 +694,14 @@ def test_completed_session_returns_original_result_without_revalidation() -> Non
         turn_service,
         debrief_service,
         strategy_service,
+        memory_service,
     ) = _build_completion_engine(session, [])
     debrief_record = _create_debrief_record(session.id)
     strategy_record = _create_strategy_record(session.id, debrief_record.id)
     debrief_service.get_for_session.return_value = debrief_record
     strategy_service.get_for_session.return_value = strategy_record
+    memory_record = _create_memory_record(session.id)
+    memory_service.get_by_trigger_session.return_value = memory_record
 
     first = engine.complete_session(session.id)
     second = engine.complete_session(session.id)
@@ -657,12 +709,15 @@ def test_completed_session_returns_original_result_without_revalidation() -> Non
     assert first.session is second.session is session
     assert first.debrief_record is second.debrief_record is debrief_record
     assert first.strategy_record is second.strategy_record is strategy_record
+    assert first.memory_record is second.memory_record is memory_record
     assert session.updated_at is original_updated_at
     assert debrief_service.get_for_session.call_count == 2
     assert strategy_service.get_for_session.call_count == 2
+    assert memory_service.get_by_trigger_session.call_count == 2
     turn_service.list_turns.assert_not_called()
     debrief_service.generate_for_session.assert_not_called()
     strategy_service.generate_for_session.assert_not_called()
+    memory_service.generate_for_session.assert_not_called()
     negotiation_service.mark_completed.assert_not_called()
 
 
@@ -674,6 +729,7 @@ def test_completed_session_without_debrief_raises_consistency_error() -> None:
         turn_service,
         debrief_service,
         strategy_service,
+        memory_service,
     ) = _build_completion_engine(session, [])
     debrief_service.get_for_session.return_value = None
 
@@ -685,6 +741,8 @@ def test_completed_session_without_debrief_raises_consistency_error() -> None:
     debrief_service.generate_for_session.assert_not_called()
     strategy_service.get_for_session.assert_not_called()
     strategy_service.generate_for_session.assert_not_called()
+    memory_service.get_by_trigger_session.assert_not_called()
+    memory_service.generate_for_session.assert_not_called()
     negotiation_service.mark_completed.assert_not_called()
 
 
@@ -696,6 +754,7 @@ def test_completed_session_without_strategy_raises_consistency_error() -> None:
         turn_service,
         debrief_service,
         strategy_service,
+        memory_service,
     ) = _build_completion_engine(session, [])
     debrief_service.get_for_session.return_value = _create_debrief_record(session.id)
     strategy_service.get_for_session.return_value = None
@@ -707,4 +766,116 @@ def test_completed_session_without_strategy_raises_consistency_error() -> None:
     turn_service.list_turns.assert_not_called()
     debrief_service.generate_for_session.assert_not_called()
     strategy_service.generate_for_session.assert_not_called()
+    memory_service.get_by_trigger_session.assert_not_called()
+    memory_service.generate_for_session.assert_not_called()
+    negotiation_service.mark_completed.assert_not_called()
+
+
+def test_memory_failure_does_not_mark_session_completed() -> None:
+    session = _create_session()
+    turns = [
+        _create_turn(
+            session.id,
+            1,
+            NegotiationTurnSpeaker.USER,
+            "We need a lower price.",
+        ),
+        _create_turn(
+            session.id,
+            2,
+            NegotiationTurnSpeaker.OPPONENT,
+            "We can discuss a smaller adjustment.",
+        ),
+    ]
+    (
+        engine,
+        negotiation_service,
+        _,
+        debrief_service,
+        strategy_service,
+        memory_service,
+    ) = _build_completion_engine(session, turns)
+    debrief_record = _create_debrief_record(session.id)
+    strategy_record = _create_strategy_record(session.id, debrief_record.id)
+    debrief_service.get_for_session.return_value = debrief_record
+    strategy_service.get_for_session.return_value = strategy_record
+    expected_error = RuntimeError("Memory failed")
+    memory_service.generate_for_session.side_effect = expected_error
+
+    with pytest.raises(RuntimeError) as exc_info:
+        engine.complete_session(session.id)
+
+    assert exc_info.value is expected_error
+    memory_service.generate_for_session.assert_called_once_with(session.id)
+    negotiation_service.mark_completed.assert_not_called()
+
+
+def test_retry_after_status_failure_requests_same_trigger_memory() -> None:
+    session = _create_session()
+    turns = [
+        _create_turn(
+            session.id,
+            1,
+            NegotiationTurnSpeaker.USER,
+            "We need a lower price.",
+        ),
+        _create_turn(
+            session.id,
+            2,
+            NegotiationTurnSpeaker.OPPONENT,
+            "We can discuss a smaller adjustment.",
+        ),
+    ]
+    (
+        engine,
+        negotiation_service,
+        _,
+        debrief_service,
+        strategy_service,
+        memory_service,
+    ) = _build_completion_engine(session, turns)
+    debrief_record = _create_debrief_record(session.id)
+    strategy_record = _create_strategy_record(session.id, debrief_record.id)
+    memory_record = _create_memory_record(session.id)
+    debrief_service.get_for_session.return_value = debrief_record
+    strategy_service.get_for_session.return_value = strategy_record
+    memory_service.generate_for_session.return_value = memory_record
+    expected_error = RuntimeError("Status update failed")
+    negotiation_service.mark_completed.side_effect = [
+        expected_error,
+        session,
+    ]
+
+    with pytest.raises(RuntimeError) as exc_info:
+        engine.complete_session(session.id)
+    result = engine.complete_session(session.id)
+
+    assert exc_info.value is expected_error
+    assert result.memory_record is memory_record
+    assert memory_service.generate_for_session.call_count == 2
+    memory_service.generate_for_session.assert_called_with(session.id)
+
+
+def test_completed_session_without_historical_memory_returns_none() -> None:
+    session = _create_session(NegotiationStatus.COMPLETED)
+    (
+        engine,
+        negotiation_service,
+        turn_service,
+        debrief_service,
+        strategy_service,
+        memory_service,
+    ) = _build_completion_engine(session, [])
+    debrief_record = _create_debrief_record(session.id)
+    strategy_record = _create_strategy_record(session.id, debrief_record.id)
+    debrief_service.get_for_session.return_value = debrief_record
+    strategy_service.get_for_session.return_value = strategy_record
+    memory_service.get_by_trigger_session.return_value = None
+
+    result = engine.complete_session(session.id)
+
+    assert result.memory_record is None
+    memory_service.get_by_trigger_session.assert_called_once_with(session.id)
+    memory_service.generate_for_session.assert_not_called()
+    turn_service.list_turns.assert_not_called()
     negotiation_service.mark_completed.assert_not_called()

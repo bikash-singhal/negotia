@@ -133,6 +133,7 @@ negotiation_engine = NegotiationEngine(
     negotiation_turn_service,
     debrief_service,
     strategy_service,
+    memory_service,
 )
 app.state.negotiation_engine = negotiation_engine
 

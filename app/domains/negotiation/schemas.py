@@ -2,6 +2,7 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
+from app.domains.memory.models import NegotiatorMemory
 from app.domains.negotiation.models import NegotiationStatus
 
 
@@ -66,3 +67,6 @@ class NegotiationCompletionResponse(BaseModel):
     strategy: NegotiationStrategyResponse
     strategy_id: UUID
     strategy_created_at: AwareDatetime
+    memory: NegotiatorMemory | None
+    memory_id: UUID | None
+    memory_created_at: AwareDatetime | None

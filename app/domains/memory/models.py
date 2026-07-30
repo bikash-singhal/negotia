@@ -21,6 +21,7 @@ class NegotiatorMemory(BaseModel):
 @dataclass(frozen=True)
 class NegotiatorMemoryRecord:
     id: UUID
+    trigger_session_id: UUID | None
     memory: NegotiatorMemory
     source_session_ids: tuple[UUID, ...]
     created_at: datetime
