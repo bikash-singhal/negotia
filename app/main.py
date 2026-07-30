@@ -17,16 +17,19 @@ from app.domains.negotiation_turn.service import NegotiationTurnService
 from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.repository import ScenarioRepository
 from app.domains.scenario.service import ScenarioService
+from app.domains.strategy.repository import NegotiationStrategyRepository
 from app.llm.factory import build_llm_provider
 from app.prompts.coach import CoachPromptBuilder
 from app.prompts.debrief import DebriefPromptBuilder
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
+from app.prompts.strategy import StrategyPromptBuilder
 from app.services.coach import CoachObservationExtractor, CoachService
 from app.services.debrief import DebriefExtractor, DebriefService
 from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
+from app.services.strategy import StrategyExtractor, StrategyService
 
 configure_logging(settings.debug)
 logger = logging.getLogger(__name__)
@@ -74,6 +77,16 @@ debrief_service = DebriefService(
     debrief_extractor,
     debrief_repository,
 )
+strategy_extractor = StrategyExtractor(
+    StrategyPromptBuilder(),
+    llm_provider,
+)
+strategy_repository = NegotiationStrategyRepository()
+strategy_service = StrategyService(
+    debrief_repository,
+    strategy_extractor,
+    strategy_repository,
+)
 app.state.scenario_service = ScenarioService(scenario_repository)
 negotiation_service = NegotiationService(
     negotiation_repository,
@@ -97,6 +110,7 @@ opponent_service = OpponentService(
 app.state.opponent_service = opponent_service
 app.state.coach_service = coach_service
 app.state.debrief_service = debrief_service
+app.state.strategy_service = strategy_service
 negotiation_engine = NegotiationEngine(
     opponent_service,
     coach_service,

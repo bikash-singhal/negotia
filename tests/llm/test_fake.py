@@ -52,3 +52,22 @@ def test_generate_returns_deterministic_debrief_json() -> None:
     assert first_response == second_response
     assert '"repeated_strengths": []' in first_response
     assert '"confidence": "low"' in first_response
+
+
+def test_generate_returns_deterministic_strategy_json() -> None:
+    provider = FakeLLMProvider()
+    system_prompt = "You are an expert negotiation strategy advisor."
+
+    first_response = provider.generate(
+        system_prompt=system_prompt,
+        user_prompt="First persisted debrief.",
+    )
+    second_response = provider.generate(
+        system_prompt=system_prompt,
+        user_prompt="Second persisted debrief.",
+    )
+
+    assert first_response == second_response
+    assert '"primary_objective"' in first_response
+    assert '"expected_outcome"' in first_response
+    assert '"prioritized_tactics"' in first_response

@@ -13,12 +13,16 @@ from app.main import (
     negotiation_turn_service,
     opponent_service,
     state_extractor,
+    strategy_extractor,
+    strategy_repository,
+    strategy_service,
 )
 from app.services.coach import CoachObservationExtractor, CoachService
 from app.services.debrief import DebriefExtractor, DebriefService
 from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
+from app.services.strategy import StrategyExtractor, StrategyService
 
 
 def test_app_builds_llm_services_with_configured_provider() -> None:
@@ -29,6 +33,8 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert isinstance(debrief_service, DebriefService)
     assert isinstance(negotiation_engine, NegotiationEngine)
     assert isinstance(state_extractor, NegotiationStateExtractor)
+    assert isinstance(strategy_extractor, StrategyExtractor)
+    assert isinstance(strategy_service, StrategyService)
     assert isinstance(opponent_service, OpponentService)
     assert coach_observation_extractor._llm_provider is llm_provider
     assert coach_service._extractor is coach_observation_extractor
@@ -52,6 +58,13 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert state_extractor._llm_provider is llm_provider
     assert opponent_service._state_extractor is state_extractor
     assert opponent_service._llm_provider is llm_provider
+    assert strategy_extractor._llm_provider is llm_provider
+    assert strategy_service._debrief_repository is debrief_repository
+    assert strategy_service._extractor is strategy_extractor
+    assert strategy_service._strategy_repository is strategy_repository
+    assert app.state.strategy_service is strategy_service
+    assert not hasattr(app.state, "strategy_repository")
+    assert not hasattr(negotiation_engine, "_strategy_service")
 
 
 def test_app_has_no_debrief_endpoint() -> None:
@@ -64,3 +77,9 @@ def test_app_registers_completion_endpoint() -> None:
     route_paths = app.openapi().get("paths", {})
 
     assert "/api/v1/negotiations/{session_id}/complete" in route_paths
+
+
+def test_app_has_no_strategy_endpoint() -> None:
+    route_paths = app.openapi().get("paths", {})
+
+    assert all("strategy" not in path for path in route_paths)

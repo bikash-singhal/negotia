@@ -15,8 +15,9 @@ Create scenario
 → explicitly complete the negotiation and receive a structured debrief
 ```
 
-Standalone Coach and debrief retrieval APIs, strategy, memory, and
-adaptive-difficulty capabilities remain future work.
+Standalone Coach, debrief, and strategy APIs, Strategy integration with the
+completion workflow, memory, and adaptive-difficulty capabilities remain future
+work.
 
 ## Current status
 
@@ -31,7 +32,9 @@ The default fake provider makes local development and automated tests determinis
 and does not call AWS. The Bedrock provider is also implemented and can be selected
 through environment configuration. DebriefService synthesizes patterns from
 stored coach observations only when a client explicitly completes a negotiation.
-The completion response includes the persisted structured debrief.
+The completion response includes the persisted structured debrief. A standalone
+StrategyService can turn that persisted debrief into actionable recommendations,
+but it is not connected to completion or an API.
 
 ## Current functionality
 
@@ -49,6 +52,8 @@ The completion response includes the persisted structured debrief.
 - LLM-assisted coach observation extraction service
 - LLM-assisted structured debrief extraction from stored coach observations
 - One in-memory debrief record per negotiation session
+- LLM-assisted structured Strategy extraction from a persisted debrief
+- One in-memory Strategy record per negotiation session
 - Deterministic opponent behavior profiles for each scenario difficulty
 - Scenario-aware system prompts and complete-history user prompts
 - Deterministic `FakeLLMProvider` for development and testing
@@ -136,6 +141,18 @@ flowchart TD
         DebriefExtractor --> DebriefPrompt
     end
 
+    subgraph Strategy["Strategy subsystem"]
+        StrategyService["StrategyService"]
+        StrategyExtractor["StrategyExtractor"]
+        StrategyRepository["NegotiationStrategyRepository"]
+        StrategyPrompt["StrategyPromptBuilder"]
+
+        StrategyService -->|"loads persisted debrief"| DebriefRepository
+        StrategyService --> StrategyExtractor
+        StrategyService --> StrategyRepository
+        StrategyExtractor --> StrategyPrompt
+    end
+
     Provider["LLMProvider protocol"]
     Fake["FakeLLMProvider"]
     Bedrock["BedrockLLMProvider"]
@@ -161,6 +178,7 @@ flowchart TD
     StateExtractor --> Provider
     CoachExtractor --> Provider
     DebriefExtractor --> Provider
+    StrategyExtractor --> Provider
     Fake -.->|"implements"| Provider
     Bedrock -.->|"implements"| Provider
 ```
@@ -171,6 +189,9 @@ turns created through the API, while CoachService retains append-only observatio
 for completed exchanges. DebriefService reads only those stored observations and
 persists at most one synthesized debrief per session. NegotiationEngine invokes it
 only after an explicit completion request passes session and turn validation.
+StrategyService reads only a persisted NegotiationDebriefRecord and stores at most
+one strategy per session. It is not invoked by NegotiationEngine or exposed by an
+API.
 
 ## End-to-end opponent workflow
 
@@ -275,6 +296,16 @@ debrief, source-observation count, session ID, and creation time. Generation is
 triggered only by the explicit negotiation-completion endpoint. There is no
 automatic completion inference or standalone debrief retrieval endpoint.
 
+### Negotiation strategy
+
+NegotiationStrategy converts one persisted NegotiationDebriefRecord into a
+primary objective, expected outcome, prioritized actionable tactics, long-term
+skills, preparation checklist, avoidance guidance, and confidence. Each tactic
+contains concrete actions, example language, and a success indicator. Strategy
+does not receive turns, coach observations, scenarios, negotiation state, or
+session repositories. It is currently an internal standalone service and is not
+part of completion.
+
 ## Technology stack
 
 - Python 3.12+
@@ -313,7 +344,8 @@ negotia/
 |   |   |-- negotiation_state/
 |   |   |-- negotiation_turn/
 |   |   |-- opponent/
-|   |   `-- scenario/
+|   |   |-- scenario/
+|   |   `-- strategy/
 |   |-- llm/
 |   |   |-- bedrock.py
 |   |   |-- factory.py
@@ -323,13 +355,15 @@ negotia/
 |   |   |-- coach.py
 |   |   |-- debrief.py
 |   |   |-- negotiation_state.py
-|   |   `-- opponent.py
+|   |   |-- opponent.py
+|   |   `-- strategy.py
 |   |-- services/
 |   |   |-- coach.py
 |   |   |-- debrief.py
 |   |   |-- negotiation_engine.py
 |   |   |-- negotiation_state.py
-|   |   `-- opponent.py
+|   |   |-- opponent.py
+|   |   `-- strategy.py
 |   `-- main.py
 |-- tests/
 |-- .env.example
@@ -460,8 +494,10 @@ uv run ruff format --check .
 - In-memory repositories do not provide a transaction spanning debrief
   persistence and session-status updates. A retry reuses a debrief persisted
   before a failed status transition.
+- Strategies are persisted only in memory and have no API or completion-workflow
+  integration.
 - Authentication and authorization are not implemented.
-- Strategy, long-term memory, and adaptive difficulty are not implemented.
+- Long-term memory and adaptive difficulty are not implemented.
 - Opponent quality depends on the selected provider, model, scenario data, and
   prompt design.
 - The current backend does not include a web frontend or durable database.
@@ -485,11 +521,13 @@ Completed:
 - [x] Deterministic NegotiationEngine orchestration layer
 - [x] Opponent service and opponent-response API
 - [x] Explicit, idempotent negotiation completion and debrief response
+- [x] Standalone structured Strategy extraction and in-memory persistence
 
 Planned:
 
 - [ ] Richer multi-round opponent behavior
-- [ ] Standalone Coach and debrief retrieval APIs, and strategy
+- [ ] Standalone Coach, debrief, and strategy APIs
+- [ ] Strategy integration with negotiation completion
 - [ ] Adaptive difficulty and long-term memory
 - [ ] Persistent database
 - [ ] Authentication and authorization
