@@ -36,7 +36,8 @@ StrategyService then turns that persisted debrief into actionable recommendation
 MemoryService then generates or reuses an immutable single-user negotiator profile
 when at least two persisted Debrief/Strategy pairs exist. The completion response
 includes the Debrief, Strategy, and optional historically associated Memory.
-None of these artifacts has a standalone API.
+AdaptiveContextService provides a read-only runtime projection of the latest
+Memory. None of these artifacts has a standalone API.
 
 ## Current functionality
 
@@ -60,6 +61,7 @@ None of these artifacts has a standalone API.
 - LLM-assisted cross-session negotiator Memory extraction from persisted Debrief
   and Strategy records
 - Immutable in-memory negotiator Memory versions for the single-user MVP
+- Read-only Adaptive Context projection derived from the latest negotiator Memory
 - Deterministic opponent behavior profiles for each scenario difficulty
 - Scenario-aware system prompts and complete-history user prompts
 - Deterministic `FakeLLMProvider` for development and testing
@@ -172,6 +174,14 @@ flowchart TD
         MemoryExtractor --> MemoryPrompt
     end
 
+    subgraph Adaptive["Adaptive Context subsystem"]
+        AdaptiveContextService["AdaptiveContextService"]
+        AdaptiveContext["AdaptiveContext"]
+
+        MemoryService -->|"latest memory"| AdaptiveContextService
+        AdaptiveContextService --> AdaptiveContext
+    end
+
     Provider["LLMProvider protocol"]
     Fake["FakeLLMProvider"]
     Bedrock["BedrockLLMProvider"]
@@ -219,6 +229,9 @@ session ID, and stores each eligible profile as a new immutable version.
 NegotiationEngine invokes it after Strategy is available and before marking the
 session completed. Each completion-triggered version is associated internally
 with its triggering session.
+AdaptiveContextService depends only on MemoryService. It reads the latest Memory
+on every request and projects selected fields into a new immutable runtime
+context without persistence, caching, LLM calls, or repository access.
 
 ## End-to-end opponent workflow
 
@@ -352,6 +365,15 @@ completion-triggered record retains internal trigger lineage, and repeated
 completion returns that historical version rather than the latest global one.
 Memory still has no public endpoint.
 
+### Adaptive context
+
+AdaptiveContext is a read-only runtime projection of the latest
+NegotiatorMemoryRecord. It exposes priority focus areas, improving skills as
+coaching focus, persistent risks as opponent adjustments, and recurring
+strengths. Every projection defensively copies its lists and is rebuilt from the
+latest Memory rather than cached. Adaptive Context is not yet integrated into
+Coach or Opponent prompts and has no public endpoint.
+
 ## Technology stack
 
 - Python 3.12+
@@ -384,6 +406,7 @@ negotia/
 |   |   |-- exceptions.py
 |   |   `-- logging_config.py
 |   |-- domains/
+|   |   |-- adaptive_context/
 |   |   |-- coach/
 |   |   |-- debrief/
 |   |   |-- memory/
@@ -406,6 +429,7 @@ negotia/
 |   |   |-- opponent.py
 |   |   `-- strategy.py
 |   |-- services/
+|   |   |-- adaptive_context.py
 |   |   |-- coach.py
 |   |   |-- debrief.py
 |   |   |-- memory.py
@@ -546,6 +570,8 @@ uv run ruff format --check .
 - Strategies are persisted only in memory and have no standalone retrieval API.
 - Negotiator Memory is versioned only in memory, is scoped to the single-user MVP,
   and has no standalone API.
+- Adaptive Context is not yet consumed by CoachService, OpponentService, or their
+  prompts.
 - Authentication and authorization are not implemented.
 - Adaptive difficulty is not implemented.
 - Opponent quality depends on the selected provider, model, scenario data, and
@@ -575,11 +601,14 @@ Completed:
 - [x] Strategy integration with negotiation completion
 - [x] Isolated cross-session negotiator Memory extraction and version persistence
 - [x] Trigger-linked Memory integration with explicit negotiation completion
+- [x] Read-only Adaptive Context projection from latest Memory
 
 Planned:
 
 - [ ] Richer multi-round opponent behavior
 - [ ] Standalone Coach, debrief, strategy, and memory APIs
+- [ ] Coach Adaptive Integration
+- [ ] Opponent Adaptive Integration
 - [ ] Adaptive difficulty
 - [ ] Durable authenticated negotiator profiles
 - [ ] Persistent database

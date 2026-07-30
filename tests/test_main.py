@@ -1,5 +1,6 @@
 from app.llm.fake import FakeLLMProvider
 from app.main import (
+    adaptive_context_service,
     app,
     coach_observation_extractor,
     coach_observation_repository,
@@ -20,6 +21,7 @@ from app.main import (
     strategy_repository,
     strategy_service,
 )
+from app.services.adaptive_context import AdaptiveContextService
 from app.services.coach import CoachObservationExtractor, CoachService
 from app.services.debrief import DebriefExtractor, DebriefService
 from app.services.memory import MemoryExtractor, MemoryService
@@ -30,6 +32,7 @@ from app.services.strategy import StrategyExtractor, StrategyService
 
 
 def test_app_builds_llm_services_with_configured_provider() -> None:
+    assert isinstance(adaptive_context_service, AdaptiveContextService)
     assert isinstance(llm_provider, FakeLLMProvider)
     assert isinstance(coach_observation_extractor, CoachObservationExtractor)
     assert isinstance(coach_service, CoachService)
@@ -79,6 +82,8 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert app.state.memory_service is memory_service
     assert not hasattr(app.state, "memory_repository")
     assert negotiation_engine._memory_service is memory_service
+    assert adaptive_context_service._memory_service is memory_service
+    assert app.state.adaptive_context_service is adaptive_context_service
 
 
 def test_app_has_no_debrief_endpoint() -> None:
@@ -103,3 +108,9 @@ def test_app_has_no_memory_endpoint() -> None:
     route_paths = app.openapi().get("paths", {})
 
     assert all("memory" not in path for path in route_paths)
+
+
+def test_app_has_no_adaptive_context_endpoint() -> None:
+    route_paths = app.openapi().get("paths", {})
+
+    assert all("adaptive" not in path for path in route_paths)

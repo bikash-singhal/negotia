@@ -26,6 +26,7 @@ from app.prompts.memory import MemoryPromptBuilder
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
 from app.prompts.strategy import StrategyPromptBuilder
+from app.services.adaptive_context import AdaptiveContextService
 from app.services.coach import CoachObservationExtractor, CoachService
 from app.services.debrief import DebriefExtractor, DebriefService
 from app.services.memory import MemoryExtractor, MemoryService
@@ -101,6 +102,7 @@ memory_service = MemoryService(
     memory_extractor,
     memory_repository,
 )
+adaptive_context_service = AdaptiveContextService(memory_service)
 app.state.scenario_service = ScenarioService(scenario_repository)
 negotiation_service = NegotiationService(
     negotiation_repository,
@@ -126,6 +128,7 @@ app.state.coach_service = coach_service
 app.state.debrief_service = debrief_service
 app.state.strategy_service = strategy_service
 app.state.memory_service = memory_service
+app.state.adaptive_context_service = adaptive_context_service
 negotiation_engine = NegotiationEngine(
     opponent_service,
     coach_service,
