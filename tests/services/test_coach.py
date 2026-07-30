@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from app.domains.adaptive_context.models import AdaptiveContext
 from app.domains.coach.exceptions import (
     EmptyCoachObservationResponseError,
     InvalidCoachExchangeError,
@@ -21,6 +22,7 @@ from app.domains.negotiation_turn.models import (
 from app.llm.fake import FakeLLMProvider
 from app.llm.provider import LLMProvider
 from app.prompts.coach import CoachPromptBuilder
+from app.services.adaptive_context import AdaptiveContextService
 from app.services.coach import CoachObservationExtractor, CoachService
 
 
@@ -55,7 +57,7 @@ def test_valid_json_produces_coach_observation() -> None:
     )
     extractor, prompt_builder, provider = _build_extractor(response)
 
-    observation = extractor.extract([])
+    observation = extractor.extract([], None)
 
     assert observation == CoachObservation(
         strengths=["Connected contract length to price."],
@@ -64,7 +66,7 @@ def test_valid_json_produces_coach_observation() -> None:
         risk_signals=["Anchored before learning the opponent's priorities."],
         confidence="high",
     )
-    prompt_builder.build_system_prompt.assert_called_once_with()
+    prompt_builder.build_system_prompt.assert_called_once_with(None)
     prompt_builder.build_user_prompt.assert_called_once_with([])
     provider.generate.assert_called_once_with(
         system_prompt="coach system prompt",
@@ -78,7 +80,7 @@ def test_fake_provider_returns_valid_coach_observation() -> None:
         FakeLLMProvider(),
     )
 
-    observation = extractor.extract([])
+    observation = extractor.extract([], None)
 
     assert observation == CoachObservation(
         strengths=[],
@@ -93,7 +95,7 @@ def test_empty_response_raises_expected_exception() -> None:
     extractor, _, _ = _build_extractor("   ")
 
     with pytest.raises(EmptyCoachObservationResponseError) as exc_info:
-        extractor.extract([])
+        extractor.extract([], None)
 
     assert str(exc_info.value) == (
         "The LLM provider returned an empty coach observation response."
@@ -104,7 +106,7 @@ def test_invalid_json_raises_expected_exception_without_raw_output() -> None:
     extractor, _, _ = _build_extractor("not JSON with private conversation data")
 
     with pytest.raises(InvalidCoachObservationJsonError) as exc_info:
-        extractor.extract([])
+        extractor.extract([], None)
 
     assert str(exc_info.value) == (
         "The LLM provider returned invalid JSON for coach observation extraction."
@@ -145,7 +147,7 @@ def test_invalid_schema_raises_expected_exception(
     extractor, _, _ = _build_extractor(json.dumps(payload))
 
     with pytest.raises(InvalidCoachObservationDataError) as exc_info:
-        extractor.extract([])
+        extractor.extract([], None)
 
     assert str(exc_info.value) == (
         "The LLM provider returned structurally invalid coach observation data."
@@ -211,7 +213,15 @@ def test_coach_service_extracts_and_persists_latest_exchange() -> None:
     extractor.extract.return_value = observation
     repository = MagicMock(spec=CoachObservationRepository)
     repository.create.side_effect = lambda record: record
-    service = CoachService(extractor, repository)
+    adaptive_context = AdaptiveContext(
+        focus_areas=["Diagnostic questioning"],
+        coaching_focus=["Concession planning"],
+        opponent_adjustments=["Apply more pressure"],
+        strengths=["Conditional concessions"],
+    )
+    adaptive_context_service = MagicMock(spec=AdaptiveContextService)
+    adaptive_context_service.get_context.return_value = adaptive_context
+    service = CoachService(extractor, repository, adaptive_context_service)
 
     result = service.analyze_exchange(
         session_id,
@@ -228,7 +238,50 @@ def test_coach_service_extracts_and_persists_latest_exchange() -> None:
     assert result.observation is observation
     assert result.created_at.tzinfo is not None
     assert result.created_at.utcoffset() == timedelta(0)
-    extractor.extract.assert_called_once_with(turns)
+    adaptive_context_service.get_context.assert_called_once_with()
+    extractor.extract.assert_called_once_with(turns, adaptive_context)
+    repository.create.assert_called_once_with(result)
+
+
+def test_coach_service_preserves_standard_behavior_without_context() -> None:
+    session_id = uuid4()
+    user_turn = _create_turn(
+        session_id,
+        1,
+        NegotiationTurnSpeaker.USER,
+        "We can commit for two years.",
+    )
+    opponent_turn = _create_turn(
+        session_id,
+        2,
+        NegotiationTurnSpeaker.OPPONENT,
+        "We require a three-year term.",
+    )
+    turns = [user_turn, opponent_turn]
+    observation = CoachObservation(
+        strengths=[],
+        weaknesses=[],
+        missed_opportunities=[],
+        risk_signals=[],
+        confidence="low",
+    )
+    extractor = MagicMock(spec=CoachObservationExtractor)
+    extractor.extract.return_value = observation
+    repository = MagicMock(spec=CoachObservationRepository)
+    repository.create.side_effect = lambda record: record
+    adaptive_context_service = MagicMock(spec=AdaptiveContextService)
+    adaptive_context_service.get_context.return_value = None
+    service = CoachService(extractor, repository, adaptive_context_service)
+
+    result = service.analyze_exchange(
+        session_id,
+        turns,
+        user_turn,
+        opponent_turn,
+    )
+
+    adaptive_context_service.get_context.assert_called_once_with()
+    extractor.extract.assert_called_once_with(turns, None)
     repository.create.assert_called_once_with(result)
 
 
@@ -255,7 +308,8 @@ def test_coach_service_rejects_non_latest_user_turn() -> None:
     turns = [earlier_user_turn, latest_user_turn, opponent_turn]
     extractor = MagicMock(spec=CoachObservationExtractor)
     repository = MagicMock(spec=CoachObservationRepository)
-    service = CoachService(extractor, repository)
+    adaptive_context_service = MagicMock(spec=AdaptiveContextService)
+    service = CoachService(extractor, repository, adaptive_context_service)
 
     with pytest.raises(InvalidCoachExchangeError):
         service.analyze_exchange(
@@ -265,6 +319,7 @@ def test_coach_service_rejects_non_latest_user_turn() -> None:
             opponent_turn,
         )
 
+    adaptive_context_service.get_context.assert_not_called()
     extractor.extract.assert_not_called()
     repository.create.assert_not_called()
 
@@ -273,3 +328,6 @@ def test_coach_service_has_no_turn_repository_dependency() -> None:
     parameters = signature(CoachService.__init__).parameters
 
     assert "turn_repository" not in parameters
+    assert "adaptive_context_service" in parameters
+    assert "memory_service" not in parameters
+    assert "memory_repository" not in parameters

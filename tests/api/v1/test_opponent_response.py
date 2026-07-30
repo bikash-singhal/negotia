@@ -27,6 +27,7 @@ from app.prompts.memory import MemoryPromptBuilder
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
 from app.prompts.strategy import StrategyPromptBuilder
+from app.services.adaptive_context import AdaptiveContextService
 from app.services.coach import CoachObservationExtractor, CoachService
 from app.services.debrief import DebriefExtractor, DebriefService
 from app.services.memory import MemoryExtractor, MemoryService
@@ -59,6 +60,7 @@ def _build_state_extractor() -> NegotiationStateExtractor:
 
 def _build_coach_service(
     repository: CoachObservationRepository,
+    adaptive_context_service: AdaptiveContextService,
 ) -> CoachService:
     return CoachService(
         CoachObservationExtractor(
@@ -66,6 +68,7 @@ def _build_coach_service(
             FakeLLMProvider(),
         ),
         repository,
+        adaptive_context_service,
     )
 
 
@@ -130,6 +133,7 @@ def client(
         app.state.debrief_service,
         app.state.strategy_service,
         app.state.memory_service,
+        app.state.adaptive_context_service,
         app.state.negotiation_engine,
     )
     scenario_repository, negotiation_repository, turn_repository = repositories
@@ -153,15 +157,20 @@ def client(
         OpponentPromptBuilder(),
         FakeLLMProvider(),
     )
-    coach_service = _build_coach_service(coach_repository)
     debrief_service, strategy_service, memory_service = _build_artifact_services(
         coach_repository
+    )
+    adaptive_context_service = AdaptiveContextService(memory_service)
+    coach_service = _build_coach_service(
+        coach_repository,
+        adaptive_context_service,
     )
     app.state.opponent_service = opponent_service
     app.state.coach_service = coach_service
     app.state.debrief_service = debrief_service
     app.state.strategy_service = strategy_service
     app.state.memory_service = memory_service
+    app.state.adaptive_context_service = adaptive_context_service
     app.state.negotiation_engine = NegotiationEngine(
         opponent_service,
         coach_service,
@@ -184,6 +193,7 @@ def client(
             app.state.debrief_service,
             app.state.strategy_service,
             app.state.memory_service,
+            app.state.adaptive_context_service,
             app.state.negotiation_engine,
         ) = original_services
 
@@ -253,7 +263,6 @@ def _replace_opponent_provider(
         OpponentPromptBuilder(),
         provider,
     )
-    coach_service = _build_coach_service(coach_repository)
     negotiation_service = NegotiationService(
         negotiation_repository,
         scenario_repository,
@@ -265,6 +274,11 @@ def _replace_opponent_provider(
     debrief_service, strategy_service, memory_service = _build_artifact_services(
         coach_repository
     )
+    adaptive_context_service = AdaptiveContextService(memory_service)
+    coach_service = _build_coach_service(
+        coach_repository,
+        adaptive_context_service,
+    )
     app.state.opponent_service = opponent_service
     app.state.coach_service = coach_service
     app.state.negotiation_service = negotiation_service
@@ -272,6 +286,7 @@ def _replace_opponent_provider(
     app.state.debrief_service = debrief_service
     app.state.strategy_service = strategy_service
     app.state.memory_service = memory_service
+    app.state.adaptive_context_service = adaptive_context_service
     app.state.negotiation_engine = NegotiationEngine(
         opponent_service,
         coach_service,

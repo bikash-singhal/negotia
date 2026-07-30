@@ -53,7 +53,8 @@ Memory. None of these artifacts has a standalone API.
 - Deterministic orchestration through NegotiationEngine
 - Validation that an opponent response follows a user turn
 - LLM-assisted structured negotiation-state extraction
-- LLM-assisted coach observation extraction service
+- LLM-assisted coach observation extraction with optional historical Adaptive
+  Context
 - LLM-assisted structured debrief extraction from stored coach observations
 - One in-memory debrief record per negotiation session
 - LLM-assisted structured Strategy extraction from a persisted debrief
@@ -182,6 +183,8 @@ flowchart TD
         AdaptiveContextService --> AdaptiveContext
     end
 
+    CoachService -->|"loads optional historical context"| AdaptiveContextService
+
     Provider["LLMProvider protocol"]
     Fake["FakeLLMProvider"]
     Bedrock["BedrockLLMProvider"]
@@ -252,9 +255,12 @@ context without persistence, caching, LLM calls, or repository access.
     ordered conversation history.
 14. NegotiationEngine passes the complete history and latest exchange to
     CoachService.
-15. CoachService extracts and persists one observation linked to the user and
-    opponent turn IDs.
-16. NegotiationEngine ignores the internal observation record and returns only the
+15. CoachService loads the latest optional Adaptive Context once, then extracts and
+    persists one observation linked to the user and opponent turn IDs. Historical
+    context guides attention, while current-session evidence remains authoritative.
+16. When no Memory exists, CoachService follows the standard non-adaptive prompt
+    path without rendering a historical-context section.
+17. NegotiationEngine ignores the internal observation record and returns only the
     opponent turn to the API.
 
 ## Explicit completion workflow
@@ -331,6 +337,10 @@ opportunities, risk signals, and a confidence value extracted from the ordered
 conversation. The coach analyzes only the user's behavior, does not participate
 in the negotiation, and persists each observation inside an immutable
 CoachObservationRecord linked to the completed user-opponent exchange.
+When available, the latest Adaptive Context supplies historical focus areas,
+coaching focus, and recurring strengths to guide observation. The prompt requires
+current-session evidence and does not treat historical tendencies as proof of
+current behavior.
 
 ### Negotiation debrief
 
@@ -371,8 +381,10 @@ AdaptiveContext is a read-only runtime projection of the latest
 NegotiatorMemoryRecord. It exposes priority focus areas, improving skills as
 coaching focus, persistent risks as opponent adjustments, and recurring
 strengths. Every projection defensively copies its lists and is rebuilt from the
-latest Memory rather than cached. Adaptive Context is not yet integrated into
-Coach or Opponent prompts and has no public endpoint.
+latest Memory rather than cached. CoachService now reads this projection once per
+observation and renders only coaching-relevant fields; no Memory preserves the
+standard Coach prompt. Opponent prompts do not yet use Adaptive Context, and the
+projection has no public endpoint.
 
 ## Technology stack
 
@@ -570,8 +582,8 @@ uv run ruff format --check .
 - Strategies are persisted only in memory and have no standalone retrieval API.
 - Negotiator Memory is versioned only in memory, is scoped to the single-user MVP,
   and has no standalone API.
-- Adaptive Context is not yet consumed by CoachService, OpponentService, or their
-  prompts.
+- Adaptive Context is consumed only by CoachService; opponent behavior is not yet
+  adaptive.
 - Authentication and authorization are not implemented.
 - Adaptive difficulty is not implemented.
 - Opponent quality depends on the selected provider, model, scenario data, and
@@ -602,12 +614,12 @@ Completed:
 - [x] Isolated cross-session negotiator Memory extraction and version persistence
 - [x] Trigger-linked Memory integration with explicit negotiation completion
 - [x] Read-only Adaptive Context projection from latest Memory
+- [x] Coach Adaptive Integration using optional historical context
 
 Planned:
 
 - [ ] Richer multi-round opponent behavior
 - [ ] Standalone Coach, debrief, strategy, and memory APIs
-- [ ] Coach Adaptive Integration
 - [ ] Opponent Adaptive Integration
 - [ ] Adaptive difficulty
 - [ ] Durable authenticated negotiator profiles

@@ -48,6 +48,7 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert coach_observation_extractor._llm_provider is llm_provider
     assert coach_service._extractor is coach_observation_extractor
     assert coach_service._repository is coach_observation_repository
+    assert coach_service._adaptive_context_service is adaptive_context_service
     assert app.state.coach_service is coach_service
     assert not hasattr(app.state, "coach_observation_repository")
     assert debrief_extractor._llm_provider is llm_provider
@@ -84,6 +85,7 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert negotiation_engine._memory_service is memory_service
     assert adaptive_context_service._memory_service is memory_service
     assert app.state.adaptive_context_service is adaptive_context_service
+    assert not hasattr(negotiation_engine, "_adaptive_context_service")
 
 
 def test_app_has_no_debrief_endpoint() -> None:

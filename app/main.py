@@ -67,10 +67,6 @@ coach_observation_extractor = CoachObservationExtractor(
     llm_provider,
 )
 coach_observation_repository = CoachObservationRepository()
-coach_service = CoachService(
-    coach_observation_extractor,
-    coach_observation_repository,
-)
 debrief_extractor = DebriefExtractor(
     DebriefPromptBuilder(),
     llm_provider,
@@ -103,6 +99,11 @@ memory_service = MemoryService(
     memory_repository,
 )
 adaptive_context_service = AdaptiveContextService(memory_service)
+coach_service = CoachService(
+    coach_observation_extractor,
+    coach_observation_repository,
+    adaptive_context_service,
+)
 app.state.scenario_service = ScenarioService(scenario_repository)
 negotiation_service = NegotiationService(
     negotiation_repository,

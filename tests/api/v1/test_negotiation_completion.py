@@ -28,6 +28,7 @@ from app.prompts.memory import MemoryPromptBuilder
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
 from app.prompts.strategy import StrategyPromptBuilder
+from app.services.adaptive_context import AdaptiveContextService
 from app.services.coach import CoachObservationExtractor, CoachService
 from app.services.debrief import DebriefExtractor, DebriefService
 from app.services.memory import MemoryExtractor, MemoryService
@@ -71,6 +72,7 @@ def completion_context() -> Iterator[CompletionContext]:
         app.state.debrief_service,
         app.state.strategy_service,
         app.state.memory_service,
+        app.state.adaptive_context_service,
         app.state.negotiation_engine,
     )
     scenario_repository = ScenarioRepository()
@@ -89,13 +91,6 @@ def completion_context() -> Iterator[CompletionContext]:
     turn_service = NegotiationTurnService(
         turn_repository,
         negotiation_repository,
-    )
-    coach_service = CoachService(
-        CoachObservationExtractor(
-            CoachPromptBuilder(),
-            fake_provider,
-        ),
-        coach_repository,
     )
     debrief_service = DebriefService(
         coach_repository,
@@ -122,6 +117,15 @@ def completion_context() -> Iterator[CompletionContext]:
         ),
         memory_repository,
     )
+    adaptive_context_service = AdaptiveContextService(memory_service)
+    coach_service = CoachService(
+        CoachObservationExtractor(
+            CoachPromptBuilder(),
+            fake_provider,
+        ),
+        coach_repository,
+        adaptive_context_service,
+    )
     opponent_service = OpponentService(
         negotiation_repository,
         scenario_repository,
@@ -142,6 +146,7 @@ def completion_context() -> Iterator[CompletionContext]:
     app.state.debrief_service = debrief_service
     app.state.strategy_service = strategy_service
     app.state.memory_service = memory_service
+    app.state.adaptive_context_service = adaptive_context_service
     app.state.negotiation_engine = NegotiationEngine(
         opponent_service,
         coach_service,
@@ -173,6 +178,7 @@ def completion_context() -> Iterator[CompletionContext]:
             app.state.debrief_service,
             app.state.strategy_service,
             app.state.memory_service,
+            app.state.adaptive_context_service,
             app.state.negotiation_engine,
         ) = original_services
 

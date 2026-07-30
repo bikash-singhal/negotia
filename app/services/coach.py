@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from app.domains.adaptive_context.models import AdaptiveContext
 from app.domains.coach.exceptions import (
     EmptyCoachObservationResponseError,
     InvalidCoachExchangeError,
@@ -18,6 +19,7 @@ from app.domains.negotiation_turn.models import (
 )
 from app.llm.provider import LLMProvider
 from app.prompts.coach import CoachPromptBuilder
+from app.services.adaptive_context import AdaptiveContextService
 
 
 class _CoachObservationPayload(BaseModel):
@@ -39,9 +41,13 @@ class CoachObservationExtractor:
         self._prompt_builder = prompt_builder
         self._llm_provider = llm_provider
 
-    def extract(self, turns: list[NegotiationTurn]) -> CoachObservation:
+    def extract(
+        self,
+        turns: list[NegotiationTurn],
+        adaptive_context: AdaptiveContext | None = None,
+    ) -> CoachObservation:
         response = self._llm_provider.generate(
-            system_prompt=self._prompt_builder.build_system_prompt(),
+            system_prompt=self._prompt_builder.build_system_prompt(adaptive_context),
             user_prompt=self._prompt_builder.build_user_prompt(turns),
         ).strip()
         if not response:
@@ -71,9 +77,11 @@ class CoachService:
         self,
         extractor: CoachObservationExtractor,
         repository: CoachObservationRepository,
+        adaptive_context_service: AdaptiveContextService,
     ) -> None:
         self._extractor = extractor
         self._repository = repository
+        self._adaptive_context_service = adaptive_context_service
 
     def analyze_exchange(
         self,
@@ -88,7 +96,8 @@ class CoachService:
             user_turn,
             opponent_turn,
         )
-        observation = self._extractor.extract(turns)
+        adaptive_context = self._adaptive_context_service.get_context()
+        observation = self._extractor.extract(turns, adaptive_context)
         record = CoachObservationRecord(
             id=uuid4(),
             session_id=session_id,
