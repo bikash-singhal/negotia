@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -22,6 +23,13 @@ from app.prompts.opponent import OpponentPromptBuilder
 from app.services.negotiation_state import NegotiationStateExtractor
 
 
+@dataclass(frozen=True)
+class OpponentResponseResult:
+    user_turn: NegotiationTurn
+    opponent_turn: NegotiationTurn
+    conversation_turns: list[NegotiationTurn]
+
+
 class OpponentService:
     def __init__(
         self,
@@ -41,7 +49,7 @@ class OpponentService:
         self._prompt_builder = prompt_builder
         self._llm_provider = llm_provider
 
-    def generate_response(self, session_id: UUID) -> NegotiationTurn:
+    def generate_response(self, session_id: UUID) -> OpponentResponseResult:
         negotiation = self._negotiation_repository.get(session_id)
         if negotiation is None:
             raise NegotiationSessionNotFoundError(session_id)
@@ -85,4 +93,10 @@ class OpponentService:
             created_at=datetime.now(UTC),
         )
 
-        return self._turn_repository.create(opponent_turn)
+        persisted_turn = self._turn_repository.create(opponent_turn)
+
+        return OpponentResponseResult(
+            user_turn=latest_turn,
+            opponent_turn=persisted_turn,
+            conversation_turns=self._turn_repository.list_by_session(session_id),
+        )

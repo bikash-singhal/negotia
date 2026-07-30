@@ -5,7 +5,7 @@ from fastapi import Request
 from app.domains.negotiation.service import NegotiationService
 from app.domains.negotiation_turn.service import NegotiationTurnService
 from app.domains.scenario.service import ScenarioService
-from app.services.opponent import OpponentService
+from app.services.negotiation_engine import NegotiationEngine
 
 
 def get_scenario_service(request: Request) -> ScenarioService:
@@ -23,5 +23,5 @@ def get_negotiation_turn_service(request: Request) -> NegotiationTurnService:
     )
 
 
-def get_opponent_service(request: Request) -> OpponentService:
-    return cast(OpponentService, request.app.state.opponent_service)
+def get_negotiation_engine(request: Request) -> NegotiationEngine:
+    return cast(NegotiationEngine, request.app.state.negotiation_engine)

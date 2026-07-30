@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.dependencies import get_negotiation_service, get_opponent_service
+from app.api.dependencies import get_negotiation_engine, get_negotiation_service
 from app.domains.negotiation.exceptions import ScenarioNotFoundError
 from app.domains.negotiation.schemas import (
     NegotiationSessionCreate,
@@ -17,7 +17,7 @@ from app.domains.negotiation_turn.exceptions import (
     OpponentResponseRequiresUserTurnError,
 )
 from app.domains.negotiation_turn.schemas import NegotiationTurnResponse
-from app.services.opponent import OpponentService
+from app.services.negotiation_engine import NegotiationEngine
 
 router = APIRouter()
 
@@ -29,10 +29,10 @@ router = APIRouter()
 )
 def generate_opponent_response(
     session_id: UUID,
-    service: Annotated[OpponentService, Depends(get_opponent_service)],
+    engine: Annotated[NegotiationEngine, Depends(get_negotiation_engine)],
 ) -> NegotiationTurnResponse:
     try:
-        turn = service.generate_response(session_id)
+        turn = engine.generate_response(session_id)
     except (NegotiationSessionNotFoundError, ScenarioNotFoundError) as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

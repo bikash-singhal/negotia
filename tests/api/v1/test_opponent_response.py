@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from app.domains.coach.repository import CoachObservationRepository
 from app.domains.negotiation.models import NegotiationSession, NegotiationStatus
 from app.domains.negotiation.repository import NegotiationRepository
 from app.domains.negotiation.service import NegotiationService
@@ -17,8 +18,11 @@ from app.domains.scenario.service import ScenarioService
 from app.llm.fake import FakeLLMProvider
 from app.llm.provider import LLMProvider
 from app.main import app
+from app.prompts.coach import CoachPromptBuilder
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
+from app.services.coach import CoachObservationExtractor, CoachService
+from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
 
@@ -32,10 +36,27 @@ Repositories = tuple[
 ]
 
 
+def _parse_uuid(value: object) -> UUID:
+    assert isinstance(value, str)
+    return UUID(value)
+
+
 def _build_state_extractor() -> NegotiationStateExtractor:
     return NegotiationStateExtractor(
         NegotiationStatePromptBuilder(),
         FakeLLMProvider(),
+    )
+
+
+def _build_coach_service(
+    repository: CoachObservationRepository,
+) -> CoachService:
+    return CoachService(
+        CoachObservationExtractor(
+            CoachPromptBuilder(),
+            FakeLLMProvider(),
+        ),
+        repository,
     )
 
 
@@ -49,7 +70,23 @@ def repositories() -> Repositories:
 
 
 @pytest.fixture
-def client(repositories: Repositories) -> Iterator[TestClient]:
+def coach_repository() -> CoachObservationRepository:
+    return CoachObservationRepository()
+
+
+@pytest.fixture
+def client(
+    repositories: Repositories,
+    coach_repository: CoachObservationRepository,
+) -> Iterator[TestClient]:
+    original_services = (
+        app.state.scenario_service,
+        app.state.negotiation_service,
+        app.state.negotiation_turn_service,
+        app.state.opponent_service,
+        app.state.coach_service,
+        app.state.negotiation_engine,
+    )
     scenario_repository, negotiation_repository, turn_repository = repositories
     app.state.scenario_service = ScenarioService(scenario_repository)
     app.state.negotiation_service = NegotiationService(
@@ -60,7 +97,7 @@ def client(repositories: Repositories) -> Iterator[TestClient]:
         turn_repository,
         negotiation_repository,
     )
-    app.state.opponent_service = OpponentService(
+    opponent_service = OpponentService(
         negotiation_repository,
         scenario_repository,
         turn_repository,
@@ -69,8 +106,25 @@ def client(repositories: Repositories) -> Iterator[TestClient]:
         OpponentPromptBuilder(),
         FakeLLMProvider(),
     )
-    with TestClient(app) as test_client:
-        yield test_client
+    coach_service = _build_coach_service(coach_repository)
+    app.state.opponent_service = opponent_service
+    app.state.coach_service = coach_service
+    app.state.negotiation_engine = NegotiationEngine(
+        opponent_service,
+        coach_service,
+    )
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        (
+            app.state.scenario_service,
+            app.state.negotiation_service,
+            app.state.negotiation_turn_service,
+            app.state.opponent_service,
+            app.state.coach_service,
+            app.state.negotiation_engine,
+        ) = original_services
 
 
 def _valid_scenario_data() -> dict[str, object]:
@@ -125,10 +179,11 @@ def _create_turn(
 
 def _replace_opponent_provider(
     repositories: Repositories,
+    coach_repository: CoachObservationRepository,
     provider: LLMProvider,
 ) -> None:
     scenario_repository, negotiation_repository, turn_repository = repositories
-    app.state.opponent_service = OpponentService(
+    opponent_service = OpponentService(
         negotiation_repository,
         scenario_repository,
         turn_repository,
@@ -137,10 +192,18 @@ def _replace_opponent_provider(
         OpponentPromptBuilder(),
         provider,
     )
+    coach_service = _build_coach_service(coach_repository)
+    app.state.opponent_service = opponent_service
+    app.state.coach_service = coach_service
+    app.state.negotiation_engine = NegotiationEngine(
+        opponent_service,
+        coach_service,
+    )
 
 
 def test_complete_http_workflow_generates_and_lists_opponent_turn(
     client: TestClient,
+    coach_repository: CoachObservationRepository,
 ) -> None:
     session = _create_session(client)
     user_turn = _create_turn(client, session["id"])
@@ -157,7 +220,7 @@ def test_complete_http_workflow_generates_and_lists_opponent_turn(
         "turn_number",
         "created_at",
     }
-    assert UUID(opponent_turn["id"])
+    assert _parse_uuid(opponent_turn["id"])
     assert opponent_turn["session_id"] == session["id"]
     assert opponent_turn["speaker"] == "opponent"
     assert opponent_turn["content"] == FAKE_RESPONSE
@@ -172,6 +235,10 @@ def test_complete_http_workflow_generates_and_lists_opponent_turn(
     assert [
         (turn["turn_number"], turn["speaker"]) for turn in history_response.json()
     ] == [(1, "user"), (2, "opponent")]
+    records = coach_repository.list_by_session(_parse_uuid(session["id"]))
+    assert len(records) == 1
+    assert records[0].user_turn_id == _parse_uuid(user_turn["id"])
+    assert records[0].opponent_turn_id == _parse_uuid(opponent_turn["id"])
 
 
 def test_opponent_response_rejects_malformed_session_uuid(
@@ -274,12 +341,13 @@ def test_opponent_response_rejects_latest_opponent_turn(
 def test_empty_provider_response_returns_bad_gateway_without_persisting(
     client: TestClient,
     repositories: Repositories,
+    coach_repository: CoachObservationRepository,
 ) -> None:
     session = _create_session(client)
     user_turn = _create_turn(client, session["id"])
     provider = MagicMock(spec=LLMProvider)
     provider.generate.return_value = "   "
-    _replace_opponent_provider(repositories, provider)
+    _replace_opponent_provider(repositories, coach_repository, provider)
     expected_message = (
         "The LLM provider returned an empty opponent response for negotiation "
         f"session '{session['id']}'."
@@ -296,18 +364,20 @@ def test_empty_provider_response_returns_bad_gateway_without_persisting(
     }
     history = client.get(f"/api/v1/negotiations/{session['id']}/turns").json()
     assert history == [user_turn]
+    assert coach_repository.list_by_session(_parse_uuid(session["id"])) == []
 
 
 def test_provider_exception_propagates_without_persisting(
     client: TestClient,
     repositories: Repositories,
+    coach_repository: CoachObservationRepository,
 ) -> None:
     session = _create_session(client)
     user_turn = _create_turn(client, session["id"])
     expected_error = RuntimeError("Provider failed")
     provider = MagicMock(spec=LLMProvider)
     provider.generate.side_effect = expected_error
-    _replace_opponent_provider(repositories, provider)
+    _replace_opponent_provider(repositories, coach_repository, provider)
 
     with pytest.raises(RuntimeError) as exc_info:
         client.post(f"/api/v1/negotiations/{session['id']}/opponent-response")
@@ -315,3 +385,4 @@ def test_provider_exception_propagates_without_persisting(
     assert exc_info.value is expected_error
     history = client.get(f"/api/v1/negotiations/{session['id']}/turns").json()
     assert history == [user_turn]
+    assert coach_repository.list_by_session(_parse_uuid(session["id"])) == []

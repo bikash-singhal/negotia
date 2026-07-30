@@ -30,7 +30,7 @@ from app.llm.fake import FakeLLMProvider
 from app.llm.provider import LLMProvider
 from app.prompts.opponent import OpponentPromptBuilder
 from app.services.negotiation_state import NegotiationStateExtractor
-from app.services.opponent import OpponentService
+from app.services.opponent import OpponentResponseResult, OpponentService
 
 FAKE_RESPONSE = (
     "I understand your position, but those terms are difficult for us to accept."
@@ -129,8 +129,10 @@ def test_generate_response_creates_and_persists_opponent_turn() -> None:
         FakeLLMProvider(),
     )
 
-    turn = service.generate_response(session.id)
+    result = service.generate_response(session.id)
+    turn = result.opponent_turn
 
+    assert isinstance(result, OpponentResponseResult)
     assert isinstance(turn, NegotiationTurn)
     assert isinstance(turn.id, UUID)
     assert turn.speaker is NegotiationTurnSpeaker.OPPONENT
@@ -140,6 +142,8 @@ def test_generate_response_creates_and_persists_opponent_turn() -> None:
     assert turn.created_at.tzinfo is not None
     assert turn.created_at.utcoffset() == timedelta(0)
     assert turn_repository.get(turn.id) is turn
+    assert result.user_turn is user_turn
+    assert result.conversation_turns == [user_turn, turn]
 
 
 def test_generate_response_builds_prompts_and_strips_content() -> None:
@@ -193,7 +197,8 @@ def test_generate_response_builds_prompts_and_strips_content() -> None:
         llm_provider,
     )
 
-    turn = service.generate_response(session.id)
+    result = service.generate_response(session.id)
+    turn = result.opponent_turn
 
     assert turn.content == "Generated opponent response."
     assert turn.turn_number == 4
@@ -210,6 +215,9 @@ def test_generate_response_builds_prompts_and_strips_content() -> None:
         system_prompt="system prompt",
         user_prompt="user prompt",
     )
+    assert result.user_turn is turns[-1]
+    assert result.conversation_turns == [*turns, turn]
+    assert [item.turn_number for item in result.conversation_turns] == [1, 2, 3, 4]
 
 
 def test_missing_session_stops_before_other_dependencies() -> None:
@@ -469,10 +477,13 @@ def test_generation_uses_only_requested_session_history() -> None:
         llm_provider,
     )
 
-    generated_turn = service.generate_response(requested_session.id)
+    result = service.generate_response(requested_session.id)
+    generated_turn = result.opponent_turn
 
     assert generated_turn.session_id == requested_session.id
     assert generated_turn.turn_number == 2
+    assert result.user_turn is requested_turn
+    assert result.conversation_turns == [requested_turn, generated_turn]
     state_extractor.extract.assert_called_once_with([requested_turn])
     prompt_builder.build_user_prompt.assert_called_once_with([requested_turn])
     assert turn_repository.list_by_session(other_session.id) == [other_turn]

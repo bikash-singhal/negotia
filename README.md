@@ -22,8 +22,9 @@ remain future work.
 The Day 5 milestone provides an end-to-end opponent-response workflow through a
 versioned FastAPI API. A scenario supplies the negotiation context, a negotiation
 session references that scenario, ordered turns capture the conversation, and the
-opponent service uses the configured LLM provider to extract the current
-negotiation state before generating and persisting the next opponent turn.
+NegotiationEngine coordinates opponent generation and subsequent coach analysis.
+OpponentService uses the configured LLM provider to extract the current negotiation
+state before generating and persisting the next opponent turn.
 
 The default fake provider makes local development and automated tests deterministic
 and does not call AWS. The Bedrock provider is also implemented and can be selected
@@ -37,6 +38,7 @@ through environment configuration.
 - Negotiation-turn creation and retrieval
 - Ordered turn history for each negotiation session
 - AI opponent-response generation
+- Deterministic orchestration through NegotiationEngine
 - Validation that an opponent response follows a user turn
 - LLM-assisted structured negotiation-state extraction
 - LLM-assisted coach observation extraction service
@@ -46,7 +48,8 @@ through environment configuration.
 - AWS Bedrock Runtime provider using the Converse API
 - Configurable `fake` or `bedrock` provider selection
 - Public scenario responses that exclude hidden context and walk-away conditions
-- Shared in-memory repositories for scenarios, sessions, and turns
+- Shared in-memory repositories for scenarios, sessions, turns, and coach
+  observations
 - Centralized configuration, logging, and JSON error responses
 - Automated API, domain, service, prompt, provider, and configuration tests
 
@@ -57,6 +60,7 @@ flowchart TD
     API["Versioned FastAPI API"]
     Config["Application configuration"]
     Factory["LLM provider factory"]
+    Engine["NegotiationEngine"]
 
     subgraph Scenario["Scenario subsystem"]
         ScenarioAPI["Scenario API"]
@@ -92,7 +96,6 @@ flowchart TD
         ProfileBuilder["OpponentProfileBuilder"]
         PromptBuilder["OpponentPromptBuilder"]
 
-        OpponentAPI --> OpponentService
         OpponentService --> StateExtractor
         StateExtractor --> StatePrompt
         OpponentService --> ProfileBuilder
@@ -105,9 +108,11 @@ flowchart TD
     subgraph Coach["Coach subsystem"]
         CoachService["CoachService"]
         CoachExtractor["CoachObservationExtractor"]
+        CoachRepository["CoachObservationRepository"]
         CoachPrompt["CoachPromptBuilder"]
 
         CoachService --> CoachExtractor
+        CoachService --> CoachRepository
         CoachExtractor --> CoachPrompt
     end
 
@@ -119,6 +124,9 @@ flowchart TD
     API --> SessionAPI
     API --> TurnAPI
     API --> OpponentAPI
+    OpponentAPI --> Engine
+    Engine -->|"request / response result"| OpponentService
+    Engine -->|"complete ordered history"| CoachService
 
     Config --> Factory
     Factory -->|"LLM_PROVIDER=fake"| Fake
@@ -133,24 +141,32 @@ flowchart TD
 
 Repositories are instantiated once for the application and shared by the services
 that need them. This lets an opponent response observe scenarios, sessions, and
-turns created through the API.
+turns created through the API, while CoachService retains append-only observations
+for completed exchanges.
 
 ## End-to-end opponent workflow
 
 1. Create a scenario.
 2. Create a negotiation session linked by `scenario_id`.
 3. Submit a user turn.
-4. Request an opponent response.
-5. Load the session, referenced scenario, and ordered turn history.
-6. Build a state-extraction prompt from the complete ordered history.
-7. Call the configured LLM provider and validate its JSON as NegotiationState.
-8. Derive a deterministic behavior profile from the scenario difficulty.
-9. Build the opponent system prompt with the state and behavior profile while
+4. Request an opponent response; the API delegates to NegotiationEngine.
+5. NegotiationEngine delegates opponent generation to OpponentService.
+6. Load the session, referenced scenario, and ordered turn history.
+7. Build a state-extraction prompt from the complete ordered history.
+8. Call the configured LLM provider and validate its JSON as NegotiationState.
+9. Derive a deterministic behavior profile from the scenario difficulty.
+10. Build the opponent system prompt with the state and behavior profile while
    retaining the complete history in the user prompt.
-10. Call the configured LLM provider for the opponent response.
-11. Strip and validate the generated response.
-12. Save it as the next numbered opponent turn.
-13. Retrieve the ordered conversation history.
+11. Call the configured LLM provider for the opponent response.
+12. Strip and validate the generated response.
+13. Save it as the next numbered opponent turn and return it with the complete
+    ordered conversation history.
+14. NegotiationEngine passes the complete history and latest exchange to
+    CoachService.
+15. CoachService extracts and persists one observation linked to the user and
+    opponent turn IDs.
+16. NegotiationEngine ignores the internal observation record and returns only the
+    opponent turn to the API.
 
 Illustrative conversation:
 
@@ -205,7 +221,8 @@ stage. The state supplements the raw history and is not persisted.
 CoachObservation contains evidence-based strengths, weaknesses, missed
 opportunities, risk signals, and a confidence value extracted from the ordered
 conversation. The coach analyzes only the user's behavior, does not participate
-in the negotiation, and does not persist observations.
+in the negotiation, and persists each observation inside an immutable
+CoachObservationRecord linked to the completed user-opponent exchange.
 
 ## Technology stack
 
@@ -256,6 +273,7 @@ negotia/
 |   |   `-- opponent.py
 |   |-- services/
 |   |   |-- coach.py
+|   |   |-- negotiation_engine.py
 |   |   |-- negotiation_state.py
 |   |   `-- opponent.py
 |   `-- main.py
@@ -376,8 +394,8 @@ uv run ruff format --check .
 - Repositories are in memory, so all data is lost when the application restarts.
 - Negotiation state is re-extracted for each opponent response and is not persisted
   or incrementally updated.
-- Coach observations are available only through the application service; no Coach
-  API or observation persistence is implemented.
+- Coach observations are persisted only in memory and are not returned by the API
+  or available through a retrieval endpoint.
 - Authentication and authorization are not implemented.
 - Debrief, strategy, long-term memory, and adaptive difficulty features are not
   implemented.
@@ -399,7 +417,8 @@ Completed:
 - [x] Scenario-aware opponent prompt builder
 - [x] Deterministic opponent behavior profiles by scenario difficulty
 - [x] LLM-assisted structured negotiation-state extraction
-- [x] Initial coach observation extractor and service
+- [x] Coach observation extraction, service, and per-exchange persistence
+- [x] Deterministic NegotiationEngine orchestration layer
 - [x] Opponent service and opponent-response API
 
 Planned:

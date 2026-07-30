@@ -1,15 +1,23 @@
 import json
+from datetime import UTC, datetime, timedelta
+from inspect import signature
 from unittest.mock import MagicMock
+from uuid import UUID, uuid4
 
 import pytest
 
 from app.domains.coach.exceptions import (
     EmptyCoachObservationResponseError,
+    InvalidCoachExchangeError,
     InvalidCoachObservationDataError,
     InvalidCoachObservationJsonError,
 )
-from app.domains.coach.models import CoachObservation
-from app.domains.negotiation_turn.models import NegotiationTurn
+from app.domains.coach.models import CoachObservation, CoachObservationRecord
+from app.domains.coach.repository import CoachObservationRepository
+from app.domains.negotiation_turn.models import (
+    NegotiationTurn,
+    NegotiationTurnSpeaker,
+)
 from app.llm.fake import FakeLLMProvider
 from app.llm.provider import LLMProvider
 from app.prompts.coach import CoachPromptBuilder
@@ -144,7 +152,54 @@ def test_invalid_schema_raises_expected_exception(
     )
 
 
-def test_coach_service_delegates_without_persistence() -> None:
+def _create_turn(
+    session_id: UUID,
+    turn_number: int,
+    speaker: NegotiationTurnSpeaker,
+    content: str,
+) -> NegotiationTurn:
+    return NegotiationTurn(
+        id=uuid4(),
+        session_id=session_id,
+        speaker=speaker,
+        content=content,
+        turn_number=turn_number,
+        created_at=datetime.now(UTC),
+    )
+
+
+def test_coach_service_extracts_and_persists_latest_exchange() -> None:
+    session_id = uuid4()
+    prior_user_turn = _create_turn(
+        session_id,
+        1,
+        NegotiationTurnSpeaker.USER,
+        "We can consider a two-year term.",
+    )
+    prior_opponent_turn = _create_turn(
+        session_id,
+        2,
+        NegotiationTurnSpeaker.OPPONENT,
+        "We require a three-year term.",
+    )
+    latest_user_turn = _create_turn(
+        session_id,
+        3,
+        NegotiationTurnSpeaker.USER,
+        "Could a larger upfront payment support two years?",
+    )
+    opponent_turn = _create_turn(
+        session_id,
+        4,
+        NegotiationTurnSpeaker.OPPONENT,
+        "A larger upfront payment could support that term.",
+    )
+    turns = [
+        prior_user_turn,
+        prior_opponent_turn,
+        latest_user_turn,
+        opponent_turn,
+    ]
     observation = CoachObservation(
         strengths=["Used a conditional trade."],
         weaknesses=[],
@@ -154,11 +209,67 @@ def test_coach_service_delegates_without_persistence() -> None:
     )
     extractor = MagicMock(spec=CoachObservationExtractor)
     extractor.extract.return_value = observation
-    service = CoachService(extractor)
-    turns: list[NegotiationTurn] = []
+    repository = MagicMock(spec=CoachObservationRepository)
+    repository.create.side_effect = lambda record: record
+    service = CoachService(extractor, repository)
 
-    result = service.analyze(turns)
+    result = service.analyze_exchange(
+        session_id,
+        turns,
+        latest_user_turn,
+        opponent_turn,
+    )
 
-    assert result is observation
+    assert isinstance(result, CoachObservationRecord)
+    assert isinstance(result.id, UUID)
+    assert result.session_id == session_id
+    assert result.user_turn_id == latest_user_turn.id
+    assert result.opponent_turn_id == opponent_turn.id
+    assert result.observation is observation
+    assert result.created_at.tzinfo is not None
+    assert result.created_at.utcoffset() == timedelta(0)
     extractor.extract.assert_called_once_with(turns)
-    assert not any("repository" in name for name in vars(service))
+    repository.create.assert_called_once_with(result)
+
+
+def test_coach_service_rejects_non_latest_user_turn() -> None:
+    session_id = uuid4()
+    earlier_user_turn = _create_turn(
+        session_id,
+        1,
+        NegotiationTurnSpeaker.USER,
+        "We need a shorter term.",
+    )
+    latest_user_turn = _create_turn(
+        session_id,
+        2,
+        NegotiationTurnSpeaker.USER,
+        "We can increase the upfront payment.",
+    )
+    opponent_turn = _create_turn(
+        session_id,
+        3,
+        NegotiationTurnSpeaker.OPPONENT,
+        "That could support a shorter term.",
+    )
+    turns = [earlier_user_turn, latest_user_turn, opponent_turn]
+    extractor = MagicMock(spec=CoachObservationExtractor)
+    repository = MagicMock(spec=CoachObservationRepository)
+    service = CoachService(extractor, repository)
+
+    with pytest.raises(InvalidCoachExchangeError):
+        service.analyze_exchange(
+            session_id,
+            turns,
+            earlier_user_turn,
+            opponent_turn,
+        )
+
+    extractor.extract.assert_not_called()
+    repository.create.assert_not_called()
+
+
+def test_coach_service_has_no_turn_repository_dependency() -> None:
+    parameters = signature(CoachService.__init__).parameters
+
+    assert "turn_repository" not in parameters
