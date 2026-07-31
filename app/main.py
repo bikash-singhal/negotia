@@ -15,6 +15,7 @@ from app.database.repositories.negotiation import SQLNegotiationRepository
 from app.database.repositories.negotiation_turn import SQLNegotiationTurnRepository
 from app.database.repositories.scenario import SQLScenarioRepository
 from app.database.repositories.strategy import SQLNegotiationStrategyRepository
+from app.database.unit_of_work import SQLCompletionUnitOfWork
 from app.domains.negotiation.service import NegotiationService
 from app.domains.negotiation_turn.service import NegotiationTurnService
 from app.domains.opponent.profile_builder import OpponentProfileBuilder
@@ -138,6 +139,7 @@ completion_workflow_service = CompletionWorkflowService(
     debrief_service,
     strategy_service,
     memory_service,
+    SQLCompletionUnitOfWork,
 )
 negotiation_engine = NegotiationEngine(
     opponent_service,

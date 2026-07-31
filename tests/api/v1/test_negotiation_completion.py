@@ -37,6 +37,9 @@ from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
 from app.services.strategy import StrategyExtractor, StrategyService
 from app.workflows.completion.service import CompletionWorkflowService
+from tests.workflows.completion.unit_of_work import (
+    build_in_memory_unit_of_work_factory,
+)
 
 
 @dataclass(frozen=True)
@@ -155,6 +158,12 @@ def completion_context() -> Iterator[CompletionContext]:
         debrief_service,
         strategy_service,
         memory_service,
+        build_in_memory_unit_of_work_factory(
+            negotiation_repository,
+            debrief_repository,
+            strategy_repository,
+            memory_repository,
+        ),
     )
     app.state.negotiation_engine = NegotiationEngine(
         opponent_service,
@@ -695,7 +704,7 @@ def test_strategy_failure_does_not_complete_session(
     assert completion_context.strategy_repository.get_by_session(session_id) is None
 
 
-def test_memory_failure_preserves_artifacts_and_retry_reuses_them(
+def test_memory_preparation_failure_persists_nothing_and_retry_regenerates(
     client: TestClient,
     completion_context: CompletionContext,
 ) -> None:
@@ -728,14 +737,12 @@ def test_memory_failure_preserves_artifacts_and_retry_reuses_them(
     persisted_session = completion_context.negotiation_repository.get(second_session_id)
     assert persisted_session is not None
     assert persisted_session.status is NegotiationStatus.CREATED
-    debrief_record = completion_context.debrief_repository.get_by_session(
-        second_session_id
+    assert (
+        completion_context.debrief_repository.get_by_session(second_session_id) is None
     )
-    strategy_record = completion_context.strategy_repository.get_by_session(
-        second_session_id
+    assert (
+        completion_context.strategy_repository.get_by_session(second_session_id) is None
     )
-    assert debrief_record is not None
-    assert strategy_record is not None
     assert (
         completion_context.memory_repository.get_by_trigger_session(second_session_id)
         is None
@@ -751,17 +758,17 @@ def test_memory_failure_preserves_artifacts_and_retry_reuses_them(
     assert retry_response.status_code == 200
     assert (
         completion_context.debrief_repository.get_by_session(second_session_id)
-        is debrief_record
+        is not None
     )
     assert (
         completion_context.strategy_repository.get_by_session(second_session_id)
-        is strategy_record
+        is not None
     )
     assert retry_response.json()["memory"] == _expected_memory()
-    assert completion_context.artifact_provider.generate.call_count == 1
+    assert completion_context.artifact_provider.generate.call_count == 3
 
 
-def test_retry_after_status_failure_reuses_persisted_memory(
+def test_retry_after_status_failure_regenerates_rolled_back_artifacts(
     client: TestClient,
     completion_context: CompletionContext,
 ) -> None:
@@ -772,20 +779,22 @@ def test_retry_after_status_failure_reuses_persisted_memory(
     assert first_completion.status_code == 200
     second_session = _create_completed_exchange(client)
     second_session_id = _parse_uuid(second_session["id"])
-    original_mark_completed = completion_context.negotiation_service.mark_completed
+    original_prepare_completion = (
+        completion_context.negotiation_service.prepare_completion
+    )
     mark_attempts = 0
 
-    def fail_once(session_id: UUID) -> NegotiationSession:
+    def fail_once(session: NegotiationSession) -> NegotiationSession:
         nonlocal mark_attempts
         mark_attempts += 1
         if mark_attempts == 1:
             raise RuntimeError("Status persistence failed")
-        return original_mark_completed(session_id)
+        return original_prepare_completion(session)
 
     completion_context.artifact_provider.generate.reset_mock()
     with patch.object(
         completion_context.negotiation_service,
-        "mark_completed",
+        "prepare_completion",
         side_effect=fail_once,
     ):
         failed_response = client.post(
@@ -800,11 +809,10 @@ def test_retry_after_status_failure_reuses_persisted_memory(
         )
 
     assert failed_response.status_code == 500
-    assert memory_record is not None
+    assert memory_record is None
     assert retry_response.status_code == 200
-    assert retry_response.json()["memory_id"] == str(memory_record.id)
     assert len(completion_context.memory_repository.list_all()) == 1
-    completion_context.artifact_provider.generate.assert_not_called()
+    assert completion_context.artifact_provider.generate.call_count == 3
 
 
 def test_completed_session_without_debrief_returns_safe_internal_error(

@@ -65,3 +65,12 @@ class CompletedNegotiationMissingStrategyError(Exception):
         super().__init__(
             f"Completed negotiation session '{session_id}' is missing its strategy."
         )
+
+
+class CompletionArtifactsChangedError(Exception):
+    def __init__(self, session_id: UUID) -> None:
+        self.session_id = session_id
+        super().__init__(
+            "Negotiation completion artifacts changed during preparation for "
+            f"session '{session_id}'; completion must be prepared again."
+        )

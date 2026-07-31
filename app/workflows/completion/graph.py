@@ -23,13 +23,13 @@ def build_completion_graph(nodes: CompletionWorkflowNodes) -> CompletionGraph:
     graph.add_node("create_or_reuse_debrief", nodes.create_or_reuse_debrief)
     graph.add_node("create_or_reuse_strategy", nodes.create_or_reuse_strategy)
     graph.add_node("create_or_reuse_memory", nodes.create_or_reuse_memory)
-    graph.add_node("mark_completed", nodes.mark_completed)
+    graph.add_node("finalize_completion", nodes.finalize_completion)
 
     graph.add_edge(START, "validate_session")
     graph.add_edge("validate_session", "create_or_reuse_debrief")
     graph.add_edge("create_or_reuse_debrief", "create_or_reuse_strategy")
     graph.add_edge("create_or_reuse_strategy", "create_or_reuse_memory")
-    graph.add_edge("create_or_reuse_memory", "mark_completed")
-    graph.add_edge("mark_completed", END)
+    graph.add_edge("create_or_reuse_memory", "finalize_completion")
+    graph.add_edge("finalize_completion", END)
 
     return graph.compile()

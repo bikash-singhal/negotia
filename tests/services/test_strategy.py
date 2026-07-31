@@ -261,6 +261,25 @@ def test_service_generates_and_persists_strategy_from_debrief() -> None:
     strategy_repository.create.assert_called_once_with(result)
 
 
+def test_service_prepares_strategy_from_supplied_debrief_without_persisting() -> None:
+    session_id = uuid4()
+    debrief_record = _create_debrief_record(session_id)
+    debrief_repository = MagicMock(spec=NegotiationDebriefRepository)
+    extractor = MagicMock(spec=StrategyExtractor)
+    strategy = _valid_strategy()
+    extractor.extract.return_value = strategy
+    strategy_repository = MagicMock(spec=NegotiationStrategyRepository)
+    service = StrategyService(debrief_repository, extractor, strategy_repository)
+
+    result = service.prepare_for_session(session_id, debrief_record)
+
+    assert result.session_id == session_id
+    assert result.debrief_id == debrief_record.id
+    assert result.strategy is strategy
+    debrief_repository.get_by_session.assert_not_called()
+    strategy_repository.create.assert_not_called()
+
+
 def test_service_rejects_missing_debrief_before_extraction() -> None:
     session_id = uuid4()
     debrief_repository = MagicMock(spec=NegotiationDebriefRepository)

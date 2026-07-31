@@ -1,4 +1,3 @@
-from collections.abc import Callable
 from uuid import UUID
 
 from sqlalchemy import select
@@ -6,12 +5,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database.models.debrief import NegotiationDebriefModel
-from app.database.session import SessionLocal
+from app.database.repositories._session import (
+    RepositorySessionManager,
+    SessionFactory,
+)
 from app.domains.debrief.exceptions import NegotiationDebriefAlreadyExistsError
 from app.domains.debrief.models import NegotiationDebrief, NegotiationDebriefRecord
 from app.domains.debrief.repository import NegotiationDebriefRepository
-
-SessionFactory = Callable[[], Session]
 
 
 def negotiation_debrief_to_model(
@@ -51,14 +51,22 @@ def negotiation_debrief_to_domain(
 
 
 class SQLNegotiationDebriefRepository(NegotiationDebriefRepository):
-    def __init__(self, session_factory: SessionFactory = SessionLocal) -> None:
-        self._session_factory = session_factory
+    def __init__(
+        self,
+        session_factory: SessionFactory | None = None,
+        *,
+        session: Session | None = None,
+    ) -> None:
+        self._session_manager = RepositorySessionManager(
+            session_factory,
+            session=session,
+        )
 
     def create(
         self,
         record: NegotiationDebriefRecord,
     ) -> NegotiationDebriefRecord:
-        with self._session_factory() as database_session:
+        with self._session_manager.session_scope() as database_session:
             try:
                 duplicate_id = database_session.scalar(
                     select(NegotiationDebriefModel.id).where(
@@ -70,10 +78,9 @@ class SQLNegotiationDebriefRepository(NegotiationDebriefRepository):
 
                 model = negotiation_debrief_to_model(record)
                 database_session.add(model)
-                database_session.commit()
-                database_session.refresh(model)
+                self._session_manager.finish_write(database_session, [model])
             except SQLAlchemyError:
-                database_session.rollback()
+                self._session_manager.rollback_owned_transaction(database_session)
                 raise
 
             return negotiation_debrief_to_domain(model)
@@ -82,7 +89,7 @@ class SQLNegotiationDebriefRepository(NegotiationDebriefRepository):
         self,
         session_id: UUID,
     ) -> NegotiationDebriefRecord | None:
-        with self._session_factory() as database_session:
+        with self._session_manager.session_scope() as database_session:
             model = database_session.scalar(
                 select(NegotiationDebriefModel).where(
                     NegotiationDebriefModel.session_id == session_id

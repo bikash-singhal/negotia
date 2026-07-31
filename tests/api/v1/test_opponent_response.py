@@ -36,6 +36,9 @@ from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
 from app.services.strategy import StrategyExtractor, StrategyService
 from app.workflows.completion.service import CompletionWorkflowService
+from tests.workflows.completion.unit_of_work import (
+    build_in_memory_unit_of_work_factory,
+)
 
 FAKE_RESPONSE = (
     "I understand your position, but those terms are difficult for us to accept."
@@ -179,6 +182,12 @@ def client(
         debrief_service,
         strategy_service,
         memory_service,
+        build_in_memory_unit_of_work_factory(
+            negotiation_repository,
+            debrief_service._debrief_repository,
+            strategy_service._strategy_repository,
+            memory_service._memory_repository,
+        ),
     )
     app.state.negotiation_engine = NegotiationEngine(
         opponent_service,
@@ -299,6 +308,12 @@ def _replace_opponent_provider(
         debrief_service,
         strategy_service,
         memory_service,
+        build_in_memory_unit_of_work_factory(
+            negotiation_repository,
+            debrief_service._debrief_repository,
+            strategy_service._strategy_repository,
+            memory_service._memory_repository,
+        ),
     )
     app.state.negotiation_engine = NegotiationEngine(
         opponent_service,

@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from app.database.unit_of_work import CompletionUnitOfWork
 from app.domains.debrief.models import (
     NegotiationDebrief,
     NegotiationDebriefRecord,
@@ -114,13 +115,42 @@ def _create_memory(session_id: UUID) -> NegotiatorMemoryRecord:
 
 
 def _build_services() -> tuple[MagicMock, MagicMock, MagicMock, MagicMock, MagicMock]:
-    return (
+    services = (
         MagicMock(spec=NegotiationService),
         MagicMock(spec=NegotiationTurnService),
         MagicMock(spec=DebriefService),
         MagicMock(spec=StrategyService),
         MagicMock(spec=MemoryService),
     )
+    services[2].get_for_session.return_value = None
+    services[3].get_for_session.return_value = None
+    services[4].get_by_trigger_session.return_value = None
+    return services
+
+
+def _build_unit_of_work_factory(
+    session: NegotiationSession,
+    debrief_service: MagicMock,
+    strategy_service: MagicMock,
+    memory_service: MagicMock,
+) -> MagicMock:
+    unit_of_work = MagicMock(spec=CompletionUnitOfWork)
+    unit_of_work.__enter__.return_value = unit_of_work
+    unit_of_work.negotiation_repository.get_for_update.return_value = session
+    unit_of_work.negotiation_repository.update.side_effect = lambda record: record
+    unit_of_work.debrief_repository.get_by_session.side_effect = lambda _session_id: (
+        debrief_service.get_for_session.return_value
+    )
+    unit_of_work.debrief_repository.create.side_effect = lambda record: record
+    unit_of_work.strategy_repository.get_by_session.side_effect = lambda _session_id: (
+        strategy_service.get_for_session.return_value
+    )
+    unit_of_work.strategy_repository.create.side_effect = lambda record: record
+    unit_of_work.memory_repository.get_by_trigger_session.side_effect = (
+        lambda _session_id: memory_service.get_by_trigger_session.return_value
+    )
+    unit_of_work.memory_repository.create.side_effect = lambda record: record
+    return MagicMock(return_value=unit_of_work)
 
 
 def test_graph_executes_linear_completion_order() -> None:
@@ -149,17 +179,17 @@ def test_graph_executes_linear_completion_order() -> None:
     debrief_service.get_for_session.side_effect = lambda _session_id: (
         call_order.append("debrief lookup") or None
     )
-    debrief_service.generate_for_session.side_effect = lambda _session_id: (
+    debrief_service.prepare_for_session.side_effect = lambda _session_id: (
         call_order.append("debrief create") or debrief
     )
     strategy_service.get_for_session.side_effect = lambda _session_id: (
         call_order.append("strategy lookup") or None
     )
-    strategy_service.generate_for_session.side_effect = lambda _session_id: (
+    strategy_service.prepare_for_session.side_effect = lambda _session_id, _debrief: (
         call_order.append("strategy create") or strategy
     )
-    memory_service.generate_for_session.side_effect = lambda _session_id: (
-        call_order.append("memory") or memory
+    memory_service.prepare_for_session.side_effect = (
+        lambda _session_id, _debrief, _strategy: call_order.append("memory") or memory
     )
 
     def mark_completed(_session_id: UUID) -> NegotiationSession:
@@ -167,7 +197,32 @@ def test_graph_executes_linear_completion_order() -> None:
         session.status = NegotiationStatus.COMPLETED
         return session
 
-    negotiation_service.mark_completed.side_effect = mark_completed
+    negotiation_service.prepare_completion.side_effect = lambda candidate: (
+        mark_completed(candidate.id)
+    )
+    unit_of_work_factory = _build_unit_of_work_factory(
+        session,
+        debrief_service,
+        strategy_service,
+        memory_service,
+    )
+    unit_of_work = unit_of_work_factory.return_value
+    unit_of_work_factory.side_effect = lambda: (
+        call_order.append("unit of work open") or unit_of_work
+    )
+    unit_of_work.debrief_repository.create.side_effect = lambda record: (
+        call_order.append("persist debrief") or record
+    )
+    unit_of_work.strategy_repository.create.side_effect = lambda record: (
+        call_order.append("persist strategy") or record
+    )
+    unit_of_work.memory_repository.create.side_effect = lambda record: (
+        call_order.append("persist memory") or record
+    )
+    unit_of_work.negotiation_repository.update.side_effect = lambda record: (
+        call_order.append("persist completion") or record
+    )
+    unit_of_work.commit.side_effect = lambda: call_order.append("commit")
     graph = build_completion_graph(
         CompletionWorkflowNodes(
             negotiation_service,
@@ -175,6 +230,7 @@ def test_graph_executes_linear_completion_order() -> None:
             debrief_service,
             strategy_service,
             memory_service,
+            unit_of_work_factory,
         )
     )
 
@@ -188,8 +244,15 @@ def test_graph_executes_linear_completion_order() -> None:
         "strategy lookup",
         "strategy create",
         "memory",
+        "unit of work open",
+        "persist debrief",
+        "persist strategy",
+        "persist memory",
         "mark completed",
+        "persist completion",
+        "commit",
     ]
+    unit_of_work.commit.assert_called_once_with()
     assert result["session"] is session
     assert result["debrief_record"] is debrief
     assert result["strategy_record"] is strategy
@@ -247,11 +310,21 @@ def test_graph_stops_after_failure(
             raise expected_error
         return _create_memory(session.id)
 
-    debrief_service.generate_for_session.side_effect = debrief_result
-    strategy_service.generate_for_session.side_effect = strategy_result
-    memory_service.generate_for_session.side_effect = memory_result
-    negotiation_service.mark_completed.side_effect = lambda _session_id: (
+    debrief_service.prepare_for_session.side_effect = debrief_result
+    strategy_service.prepare_for_session.side_effect = lambda session_id, _debrief: (
+        strategy_result(session_id)
+    )
+    memory_service.prepare_for_session.side_effect = (
+        lambda session_id, _debrief, _strategy: memory_result(session_id)
+    )
+    negotiation_service.prepare_completion.side_effect = lambda candidate: (
         call_order.append("mark completed") or session
+    )
+    unit_of_work_factory = _build_unit_of_work_factory(
+        session,
+        debrief_service,
+        strategy_service,
+        memory_service,
     )
     graph = build_completion_graph(
         CompletionWorkflowNodes(
@@ -260,6 +333,7 @@ def test_graph_stops_after_failure(
             debrief_service,
             strategy_service,
             memory_service,
+            unit_of_work_factory,
         )
     )
 
@@ -287,6 +361,12 @@ def test_completed_session_reuses_artifacts_without_validation_or_marking() -> N
     debrief_service.get_for_session.return_value = debrief
     strategy_service.get_for_session.return_value = strategy
     memory_service.get_by_trigger_session.return_value = memory
+    unit_of_work_factory = _build_unit_of_work_factory(
+        session,
+        debrief_service,
+        strategy_service,
+        memory_service,
+    )
     graph = build_completion_graph(
         CompletionWorkflowNodes(
             negotiation_service,
@@ -294,6 +374,7 @@ def test_completed_session_reuses_artifacts_without_validation_or_marking() -> N
             debrief_service,
             strategy_service,
             memory_service,
+            unit_of_work_factory,
         )
     )
 
@@ -306,8 +387,9 @@ def test_completed_session_reuses_artifacts_without_validation_or_marking() -> N
     assert first["strategy_record"] is strategy
     assert first["memory_record"] is memory
     assert session.updated_at is original_updated_at
+    unit_of_work_factory.return_value.commit.assert_not_called()
     turn_service.list_turns.assert_not_called()
-    debrief_service.generate_for_session.assert_not_called()
-    strategy_service.generate_for_session.assert_not_called()
-    memory_service.generate_for_session.assert_not_called()
-    negotiation_service.mark_completed.assert_not_called()
+    debrief_service.prepare_for_session.assert_not_called()
+    strategy_service.prepare_for_session.assert_not_called()
+    memory_service.prepare_for_session.assert_not_called()
+    negotiation_service.prepare_completion.assert_not_called()

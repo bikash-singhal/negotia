@@ -422,6 +422,39 @@ def test_generate_for_session_persists_completion_lineage() -> None:
     assert result.created_at.utcoffset() == timedelta(0)
 
 
+def test_prepare_for_session_builds_candidate_without_persisting() -> None:
+    first_session_id = UUID("00000000-0000-0000-0000-000000000001")
+    trigger_session_id = UUID("00000000-0000-0000-0000-000000000002")
+    debriefs, strategies = _create_matched_records(
+        trigger_session_id,
+        first_session_id,
+    )
+    debrief_repository = MagicMock(spec=NegotiationDebriefRepository)
+    debrief_repository.get_by_session.return_value = debriefs[0]
+    strategy_repository = MagicMock(spec=NegotiationStrategyRepository)
+    strategy_repository.list_all.return_value = [strategies[0]]
+    extractor = MagicMock(spec=MemoryExtractor)
+    extractor.extract.return_value = _valid_memory()
+    memory_repository = MagicMock(spec=NegotiatorMemoryRepository)
+    service = MemoryService(
+        debrief_repository,
+        strategy_repository,
+        extractor,
+        memory_repository,
+    )
+
+    result = service.prepare_for_session(
+        trigger_session_id,
+        debriefs[1],
+        strategies[1],
+    )
+
+    assert result is not None
+    assert result.trigger_session_id == trigger_session_id
+    assert result.source_session_ids == (first_session_id, trigger_session_id)
+    memory_repository.create.assert_not_called()
+
+
 def test_generate_allows_multiple_standalone_versions_without_lineage() -> None:
     debriefs, strategies = _create_matched_records(uuid4(), uuid4())
     debrief_repository = NegotiationDebriefRepository()

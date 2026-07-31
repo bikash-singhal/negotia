@@ -7,6 +7,7 @@ from app.database.repositories.negotiation import SQLNegotiationRepository
 from app.database.repositories.negotiation_turn import SQLNegotiationTurnRepository
 from app.database.repositories.scenario import SQLScenarioRepository
 from app.database.repositories.strategy import SQLNegotiationStrategyRepository
+from app.database.unit_of_work import SQLCompletionUnitOfWork
 from app.domains.adaptive_context.models import AdaptiveContext
 from app.domains.coach.models import CoachObservation
 from app.domains.debrief.models import NegotiationDebrief
@@ -193,6 +194,7 @@ def test_complete_negotiation_lifecycle_persists_all_aggregates_idempotently(
         debrief_service,
         strategy_service,
         memory_service,
+        lambda: SQLCompletionUnitOfWork(database_session_factory),
     )
     engine = NegotiationEngine(
         opponent_service,

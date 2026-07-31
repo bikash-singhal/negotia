@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from app.database.unit_of_work import CompletionUnitOfWorkFactory
 from app.domains.negotiation.service import NegotiationService
 from app.domains.negotiation_turn.service import NegotiationTurnService
 from app.services.debrief import DebriefService
@@ -21,6 +22,7 @@ class CompletionWorkflowService:
         debrief_service: DebriefService,
         strategy_service: StrategyService,
         memory_service: MemoryService,
+        unit_of_work_factory: CompletionUnitOfWorkFactory,
     ) -> None:
         self._nodes = CompletionWorkflowNodes(
             negotiation_service,
@@ -28,6 +30,7 @@ class CompletionWorkflowService:
             debrief_service,
             strategy_service,
             memory_service,
+            unit_of_work_factory,
         )
         self._graph: CompletionGraph = build_completion_graph(self._nodes)
 

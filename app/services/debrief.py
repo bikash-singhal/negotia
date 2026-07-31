@@ -90,6 +90,12 @@ class DebriefService:
         self,
         session_id: UUID,
     ) -> NegotiationDebriefRecord:
+        return self._debrief_repository.create(self.prepare_for_session(session_id))
+
+    def prepare_for_session(
+        self,
+        session_id: UUID,
+    ) -> NegotiationDebriefRecord:
         observations = self._coach_observation_repository.list_by_session(session_id)
         if not observations:
             raise NoCoachObservationsError()
@@ -102,7 +108,7 @@ class DebriefService:
             observation_count=len(observations),
             created_at=datetime.now(UTC),
         )
-        return self._debrief_repository.create(record)
+        return record
 
     def get_for_session(
         self,

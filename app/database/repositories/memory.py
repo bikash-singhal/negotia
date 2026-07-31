@@ -1,4 +1,4 @@
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import select
@@ -9,12 +9,13 @@ from app.database.models.memory import (
     NegotiatorMemoryModel,
     NegotiatorMemorySourceModel,
 )
-from app.database.session import SessionLocal
+from app.database.repositories._session import (
+    RepositorySessionManager,
+    SessionFactory,
+)
 from app.domains.memory.exceptions import NegotiatorMemoryAlreadyExistsError
 from app.domains.memory.models import NegotiatorMemory, NegotiatorMemoryRecord
 from app.domains.memory.repository import NegotiatorMemoryRepository
-
-SessionFactory = Callable[[], Session]
 
 
 def _require_string_list(value: object, field_name: str) -> list[str]:
@@ -106,14 +107,22 @@ def negotiator_memory_to_domain(
 
 
 class SQLNegotiatorMemoryRepository(NegotiatorMemoryRepository):
-    def __init__(self, session_factory: SessionFactory = SessionLocal) -> None:
-        self._session_factory = session_factory
+    def __init__(
+        self,
+        session_factory: SessionFactory | None = None,
+        *,
+        session: Session | None = None,
+    ) -> None:
+        self._session_manager = RepositorySessionManager(
+            session_factory,
+            session=session,
+        )
 
     def create(
         self,
         record: NegotiatorMemoryRecord,
     ) -> NegotiatorMemoryRecord:
-        with self._session_factory() as database_session:
+        with self._session_manager.session_scope() as database_session:
             try:
                 trigger_session_id = record.trigger_session_id
                 if trigger_session_id is not None:
@@ -131,18 +140,18 @@ class SQLNegotiatorMemoryRepository(NegotiatorMemoryRepository):
                 database_session.add(model)
                 database_session.flush()
                 database_session.add_all(source_models)
-                database_session.commit()
-                database_session.refresh(model)
-                for source_model in source_models:
-                    database_session.refresh(source_model)
+                self._session_manager.finish_write(
+                    database_session,
+                    [model, *source_models],
+                )
             except SQLAlchemyError:
-                database_session.rollback()
+                self._session_manager.rollback_owned_transaction(database_session)
                 raise
 
             return negotiator_memory_to_domain(model, source_models)
 
     def get_latest(self) -> NegotiatorMemoryRecord | None:
-        with self._session_factory() as database_session:
+        with self._session_manager.session_scope() as database_session:
             model = database_session.scalar(
                 select(NegotiatorMemoryModel)
                 .order_by(
@@ -156,7 +165,7 @@ class SQLNegotiatorMemoryRepository(NegotiatorMemoryRepository):
             return self._to_domain(database_session, model)
 
     def list_all(self) -> list[NegotiatorMemoryRecord]:
-        with self._session_factory() as database_session:
+        with self._session_manager.session_scope() as database_session:
             models = database_session.scalars(
                 select(NegotiatorMemoryModel).order_by(
                     NegotiatorMemoryModel.created_at,
@@ -169,7 +178,7 @@ class SQLNegotiatorMemoryRepository(NegotiatorMemoryRepository):
         self,
         session_id: UUID,
     ) -> NegotiatorMemoryRecord | None:
-        with self._session_factory() as database_session:
+        with self._session_manager.session_scope() as database_session:
             model = database_session.scalar(
                 select(NegotiatorMemoryModel).where(
                     NegotiatorMemoryModel.trigger_session_id == session_id

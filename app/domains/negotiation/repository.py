@@ -15,6 +15,9 @@ class NegotiationRepository:
     def get(self, session_id: UUID) -> NegotiationSession | None:
         return self._sessions.get(session_id)
 
+    def get_for_update(self, session_id: UUID) -> NegotiationSession | None:
+        return self.get(session_id)
+
     def list(self) -> list[NegotiationSession]:
         return list(self._sessions.values())
 

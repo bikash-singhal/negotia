@@ -143,7 +143,28 @@ class MemoryService:
         if len(strategy_records) < 2:
             return None
 
-        return self._extract_and_persist(
+        return self._memory_repository.create(
+            self._prepare_record(
+                debrief_records,
+                strategy_records,
+                trigger_session_id=session_id,
+            )
+        )
+
+    def prepare_for_session(
+        self,
+        session_id: UUID,
+        debrief_record: NegotiationDebriefRecord,
+        strategy_record: NegotiationStrategyRecord,
+    ) -> NegotiatorMemoryRecord | None:
+        debrief_records, strategy_records = self._load_artifact_history(
+            current_debrief=debrief_record,
+            current_strategy=strategy_record,
+        )
+        if len(strategy_records) < 2:
+            return None
+
+        return self._prepare_record(
             debrief_records,
             strategy_records,
             trigger_session_id=session_id,
@@ -163,22 +184,53 @@ class MemoryService:
 
     def _load_artifact_history(
         self,
+        *,
+        current_debrief: NegotiationDebriefRecord | None = None,
+        current_strategy: NegotiationStrategyRecord | None = None,
     ) -> tuple[
         list[NegotiationDebriefRecord],
         list[NegotiationStrategyRecord],
     ]:
         strategy_records = self._strategy_repository.list_all()
+        if current_strategy is not None and all(
+            record.session_id != current_strategy.session_id
+            for record in strategy_records
+        ):
+            strategy_records.append(current_strategy)
+
         debrief_records: list[NegotiationDebriefRecord] = []
         for strategy_record in strategy_records:
-            debrief_record = self._debrief_repository.get_by_session(
-                strategy_record.session_id
-            )
+            if (
+                current_debrief is not None
+                and current_debrief.session_id == strategy_record.session_id
+            ):
+                debrief_record = current_debrief
+            else:
+                debrief_record = self._debrief_repository.get_by_session(
+                    strategy_record.session_id
+                )
             if debrief_record is None:
+                raise MismatchedMemoryArtifactSetError()
+            if strategy_record.debrief_id != debrief_record.id:
                 raise MismatchedMemoryArtifactSetError()
             debrief_records.append(debrief_record)
         return debrief_records, strategy_records
 
     def _extract_and_persist(
+        self,
+        debrief_records: list[NegotiationDebriefRecord],
+        strategy_records: list[NegotiationStrategyRecord],
+        trigger_session_id: UUID | None,
+    ) -> NegotiatorMemoryRecord:
+        return self._memory_repository.create(
+            self._prepare_record(
+                debrief_records,
+                strategy_records,
+                trigger_session_id,
+            )
+        )
+
+    def _prepare_record(
         self,
         debrief_records: list[NegotiationDebriefRecord],
         strategy_records: list[NegotiationStrategyRecord],
@@ -198,4 +250,4 @@ class MemoryService:
             source_session_ids=source_session_ids,
             created_at=datetime.now(UTC),
         )
-        return self._memory_repository.create(record)
+        return record

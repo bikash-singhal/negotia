@@ -128,8 +128,18 @@ class StrategyService:
         self,
         session_id: UUID,
     ) -> NegotiationStrategyRecord:
-        debrief_record = self._debrief_repository.get_by_session(session_id)
+        return self._strategy_repository.create(self.prepare_for_session(session_id))
+
+    def prepare_for_session(
+        self,
+        session_id: UUID,
+        debrief_record: NegotiationDebriefRecord | None = None,
+    ) -> NegotiationStrategyRecord:
         if debrief_record is None:
+            debrief_record = self._debrief_repository.get_by_session(session_id)
+        if debrief_record is None:
+            raise NegotiationDebriefNotFoundError(session_id)
+        if debrief_record.session_id != session_id:
             raise NegotiationDebriefNotFoundError(session_id)
 
         strategy = self._extractor.extract(debrief_record)
@@ -140,7 +150,7 @@ class StrategyService:
             strategy=strategy,
             created_at=datetime.now(UTC),
         )
-        return self._strategy_repository.create(record)
+        return record
 
     def get_for_session(
         self,

@@ -1,4 +1,3 @@
-from collections.abc import Callable
 from uuid import UUID
 
 from sqlalchemy import select
@@ -6,7 +5,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database.models.strategy import NegotiationStrategyModel
-from app.database.session import SessionLocal
+from app.database.repositories._session import (
+    RepositorySessionManager,
+    SessionFactory,
+)
 from app.domains.strategy.exceptions import NegotiationStrategyAlreadyExistsError
 from app.domains.strategy.models import (
     NegotiationStrategy,
@@ -14,8 +16,6 @@ from app.domains.strategy.models import (
     NegotiationTactic,
 )
 from app.domains.strategy.repository import NegotiationStrategyRepository
-
-SessionFactory = Callable[[], Session]
 
 
 def _tactic_to_json(tactic: NegotiationTactic) -> dict[str, object]:
@@ -107,14 +107,22 @@ def negotiation_strategy_to_domain(
 
 
 class SQLNegotiationStrategyRepository(NegotiationStrategyRepository):
-    def __init__(self, session_factory: SessionFactory = SessionLocal) -> None:
-        self._session_factory = session_factory
+    def __init__(
+        self,
+        session_factory: SessionFactory | None = None,
+        *,
+        session: Session | None = None,
+    ) -> None:
+        self._session_manager = RepositorySessionManager(
+            session_factory,
+            session=session,
+        )
 
     def create(
         self,
         record: NegotiationStrategyRecord,
     ) -> NegotiationStrategyRecord:
-        with self._session_factory() as database_session:
+        with self._session_manager.session_scope() as database_session:
             try:
                 duplicate_id = database_session.scalar(
                     select(NegotiationStrategyModel.id).where(
@@ -126,10 +134,9 @@ class SQLNegotiationStrategyRepository(NegotiationStrategyRepository):
 
                 model = negotiation_strategy_to_model(record)
                 database_session.add(model)
-                database_session.commit()
-                database_session.refresh(model)
+                self._session_manager.finish_write(database_session, [model])
             except SQLAlchemyError:
-                database_session.rollback()
+                self._session_manager.rollback_owned_transaction(database_session)
                 raise
 
             return negotiation_strategy_to_domain(model)
@@ -138,7 +145,7 @@ class SQLNegotiationStrategyRepository(NegotiationStrategyRepository):
         self,
         session_id: UUID,
     ) -> NegotiationStrategyRecord | None:
-        with self._session_factory() as database_session:
+        with self._session_manager.session_scope() as database_session:
             model = database_session.scalar(
                 select(NegotiationStrategyModel).where(
                     NegotiationStrategyModel.session_id == session_id
@@ -147,7 +154,7 @@ class SQLNegotiationStrategyRepository(NegotiationStrategyRepository):
             return None if model is None else negotiation_strategy_to_domain(model)
 
     def list_all(self) -> list[NegotiationStrategyRecord]:
-        with self._session_factory() as database_session:
+        with self._session_manager.session_scope() as database_session:
             models = database_session.scalars(
                 select(NegotiationStrategyModel).order_by(
                     NegotiationStrategyModel.created_at,

@@ -5,6 +5,7 @@ from app.database.repositories.negotiation import SQLNegotiationRepository
 from app.database.repositories.negotiation_turn import SQLNegotiationTurnRepository
 from app.database.repositories.scenario import SQLScenarioRepository
 from app.database.repositories.strategy import SQLNegotiationStrategyRepository
+from app.database.unit_of_work import SQLCompletionUnitOfWork
 from app.llm.fake import FakeLLMProvider
 from app.main import (
     adaptive_context_service,
@@ -95,6 +96,10 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert completion_workflow_service._nodes._debrief_service is debrief_service
     assert completion_workflow_service._nodes._strategy_service is strategy_service
     assert completion_workflow_service._nodes._memory_service is memory_service
+    assert (
+        completion_workflow_service._nodes._unit_of_work_factory
+        is SQLCompletionUnitOfWork
+    )
     assert app.state.negotiation_engine is negotiation_engine
     assert state_extractor._llm_provider is llm_provider
     assert opponent_service._state_extractor is state_extractor

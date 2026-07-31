@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from app.database.unit_of_work import CompletionUnitOfWork
 from app.domains.debrief.models import (
     NegotiationDebrief,
     NegotiationDebriefRecord,
@@ -82,6 +83,7 @@ def _build_service() -> CompletionWorkflowService:
         MagicMock(spec=DebriefService),
         MagicMock(spec=StrategyService),
         MagicMock(spec=MemoryService),
+        MagicMock(return_value=MagicMock(spec=CompletionUnitOfWork)),
     )
 
 

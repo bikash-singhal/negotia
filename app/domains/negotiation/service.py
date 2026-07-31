@@ -74,6 +74,26 @@ class NegotiationService:
         if session.status is NegotiationStatus.COMPLETED:
             return session
 
+        self.prepare_completion(session)
+        return self._negotiation_repository.update(session)
+
+    def prepare_completion(
+        self,
+        session: NegotiationSession,
+    ) -> NegotiationSession:
+        if session.status not in {
+            NegotiationStatus.CREATED,
+            NegotiationStatus.ACTIVE,
+            NegotiationStatus.COMPLETED,
+        }:
+            raise InvalidNegotiationStatusTransitionError(
+                session.id,
+                session.status,
+                NegotiationStatus.COMPLETED,
+            )
+        if session.status is NegotiationStatus.COMPLETED:
+            return session
+
         session.status = NegotiationStatus.COMPLETED
         session.updated_at = datetime.now(UTC)
-        return self._negotiation_repository.update(session)
+        return session

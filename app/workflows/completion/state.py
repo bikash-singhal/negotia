@@ -14,6 +14,9 @@ class CompletionWorkflowState(TypedDict):
     debrief_record: NotRequired[NegotiationDebriefRecord]
     strategy_record: NotRequired[NegotiationStrategyRecord]
     memory_record: NotRequired[NegotiatorMemoryRecord | None]
+    debrief_prepared: NotRequired[bool]
+    strategy_prepared: NotRequired[bool]
+    memory_prepared: NotRequired[bool]
 
 
 class CompletionWorkflowUpdate(TypedDict, total=False):
@@ -21,6 +24,9 @@ class CompletionWorkflowUpdate(TypedDict, total=False):
     debrief_record: NegotiationDebriefRecord
     strategy_record: NegotiationStrategyRecord
     memory_record: NegotiatorMemoryRecord | None
+    debrief_prepared: bool
+    strategy_prepared: bool
+    memory_prepared: bool
 
 
 @dataclass(frozen=True)

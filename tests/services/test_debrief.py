@@ -222,6 +222,24 @@ def test_service_loads_all_observations_in_order_and_persists_record() -> None:
     debrief_repository.create.assert_called_once_with(result)
 
 
+def test_service_prepares_debrief_without_persisting() -> None:
+    session_id = uuid4()
+    observations = [_create_observation_record(session_id, 1)]
+    coach_repository = MagicMock(spec=CoachObservationRepository)
+    coach_repository.list_by_session.return_value = observations
+    extractor = MagicMock(spec=DebriefExtractor)
+    debrief = _valid_debrief()
+    extractor.extract.return_value = debrief
+    debrief_repository = MagicMock(spec=NegotiationDebriefRepository)
+    service = DebriefService(coach_repository, extractor, debrief_repository)
+
+    result = service.prepare_for_session(session_id)
+
+    assert result.session_id == session_id
+    assert result.debrief is debrief
+    debrief_repository.create.assert_not_called()
+
+
 def test_service_rejects_session_without_observations() -> None:
     coach_repository = MagicMock(spec=CoachObservationRepository)
     coach_repository.list_by_session.return_value = []
