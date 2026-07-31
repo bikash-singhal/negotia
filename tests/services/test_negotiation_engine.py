@@ -38,6 +38,8 @@ from app.services.negotiation_engine import (
 )
 from app.services.opponent import OpponentResponseResult, OpponentService
 from app.services.strategy import StrategyService
+from app.workflows.completion.service import CompletionWorkflowService
+from app.workflows.completion.state import CompletionWorkflowResult
 
 
 def _create_turn(
@@ -63,11 +65,7 @@ def _build_engine(
     return NegotiationEngine(
         opponent_service,
         coach_service,
-        MagicMock(spec=NegotiationService),
-        MagicMock(spec=NegotiationTurnService),
-        MagicMock(spec=DebriefService),
-        MagicMock(spec=StrategyService),
-        MagicMock(spec=MemoryService),
+        MagicMock(spec=CompletionWorkflowService),
     )
 
 
@@ -162,14 +160,17 @@ def _build_completion_engine(
     memory_service = MagicMock(spec=MemoryService)
     memory_service.generate_for_session.return_value = None
     memory_service.get_by_trigger_session.return_value = None
-    engine = NegotiationEngine(
-        MagicMock(spec=OpponentService),
-        MagicMock(spec=CoachService),
+    completion_workflow_service = CompletionWorkflowService(
         negotiation_service,
         turn_service,
         debrief_service,
         strategy_service,
         memory_service,
+    )
+    engine = NegotiationEngine(
+        MagicMock(spec=OpponentService),
+        MagicMock(spec=CoachService),
+        completion_workflow_service,
     )
     return (
         engine,
@@ -350,6 +351,47 @@ def test_negotiation_engine_has_no_repository_dependency() -> None:
     parameters = signature(NegotiationEngine.__init__).parameters
 
     assert not any("repository" in name for name in parameters)
+
+
+def test_completion_delegates_once_and_maps_workflow_result() -> None:
+    session = _create_session(NegotiationStatus.COMPLETED)
+    debrief_record = _create_debrief_record(session.id)
+    strategy_record = _create_strategy_record(session.id, debrief_record.id)
+    memory_record = _create_memory_record(session.id)
+    workflow_result = CompletionWorkflowResult(
+        session,
+        debrief_record,
+        strategy_record,
+        memory_record,
+    )
+    workflow_service = MagicMock(spec=CompletionWorkflowService)
+    workflow_service.run.return_value = workflow_result
+    engine = NegotiationEngine(
+        MagicMock(spec=OpponentService),
+        MagicMock(spec=CoachService),
+        workflow_service,
+    )
+
+    result = engine.complete_session(session.id)
+
+    assert result == NegotiationCompletionResult(
+        session,
+        debrief_record,
+        strategy_record,
+        memory_record,
+    )
+    workflow_service.run.assert_called_once_with(session.id)
+
+
+def test_engine_completion_has_no_direct_domain_service_dependencies() -> None:
+    parameters = signature(NegotiationEngine.__init__).parameters
+
+    assert list(parameters) == [
+        "self",
+        "opponent_service",
+        "coach_service",
+        "completion_workflow_service",
+    ]
 
 
 def test_completion_persists_debrief_then_strategy_then_marks_completed() -> None:

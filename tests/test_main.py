@@ -5,6 +5,7 @@ from app.main import (
     coach_observation_extractor,
     coach_observation_repository,
     coach_service,
+    completion_workflow_service,
     debrief_extractor,
     debrief_repository,
     debrief_service,
@@ -29,6 +30,7 @@ from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
 from app.services.strategy import StrategyExtractor, StrategyService
+from app.workflows.completion.service import CompletionWorkflowService
 
 
 def test_app_builds_llm_services_with_configured_provider() -> None:
@@ -36,6 +38,7 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert isinstance(llm_provider, FakeLLMProvider)
     assert isinstance(coach_observation_extractor, CoachObservationExtractor)
     assert isinstance(coach_service, CoachService)
+    assert isinstance(completion_workflow_service, CompletionWorkflowService)
     assert isinstance(debrief_extractor, DebriefExtractor)
     assert isinstance(debrief_service, DebriefService)
     assert isinstance(memory_extractor, MemoryExtractor)
@@ -61,9 +64,19 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert not hasattr(app.state, "debrief_repository")
     assert negotiation_engine._opponent_service is opponent_service
     assert negotiation_engine._coach_service is coach_service
-    assert negotiation_engine._negotiation_service is negotiation_service
-    assert negotiation_engine._negotiation_turn_service is negotiation_turn_service
-    assert negotiation_engine._debrief_service is debrief_service
+    assert (
+        negotiation_engine._completion_workflow_service is completion_workflow_service
+    )
+    assert (
+        completion_workflow_service._nodes._negotiation_service is negotiation_service
+    )
+    assert (
+        completion_workflow_service._nodes._negotiation_turn_service
+        is negotiation_turn_service
+    )
+    assert completion_workflow_service._nodes._debrief_service is debrief_service
+    assert completion_workflow_service._nodes._strategy_service is strategy_service
+    assert completion_workflow_service._nodes._memory_service is memory_service
     assert app.state.negotiation_engine is negotiation_engine
     assert state_extractor._llm_provider is llm_provider
     assert opponent_service._state_extractor is state_extractor
@@ -75,7 +88,6 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert strategy_service._strategy_repository is strategy_repository
     assert app.state.strategy_service is strategy_service
     assert not hasattr(app.state, "strategy_repository")
-    assert negotiation_engine._strategy_service is strategy_service
     assert memory_extractor._llm_provider is llm_provider
     assert memory_service._debrief_repository is debrief_repository
     assert memory_service._strategy_repository is strategy_repository
@@ -83,7 +95,11 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert memory_service._memory_repository is memory_repository
     assert app.state.memory_service is memory_service
     assert not hasattr(app.state, "memory_repository")
-    assert negotiation_engine._memory_service is memory_service
+    assert not hasattr(negotiation_engine, "_negotiation_service")
+    assert not hasattr(negotiation_engine, "_negotiation_turn_service")
+    assert not hasattr(negotiation_engine, "_debrief_service")
+    assert not hasattr(negotiation_engine, "_strategy_service")
+    assert not hasattr(negotiation_engine, "_memory_service")
     assert adaptive_context_service._memory_service is memory_service
     assert app.state.adaptive_context_service is adaptive_context_service
     assert not hasattr(negotiation_engine, "_adaptive_context_service")

@@ -34,6 +34,7 @@ from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
 from app.services.strategy import StrategyExtractor, StrategyService
+from app.workflows.completion.service import CompletionWorkflowService
 
 configure_logging(settings.debug)
 logger = logging.getLogger(__name__)
@@ -131,14 +132,17 @@ app.state.debrief_service = debrief_service
 app.state.strategy_service = strategy_service
 app.state.memory_service = memory_service
 app.state.adaptive_context_service = adaptive_context_service
-negotiation_engine = NegotiationEngine(
-    opponent_service,
-    coach_service,
+completion_workflow_service = CompletionWorkflowService(
     negotiation_service,
     negotiation_turn_service,
     debrief_service,
     strategy_service,
     memory_service,
+)
+negotiation_engine = NegotiationEngine(
+    opponent_service,
+    coach_service,
+    completion_workflow_service,
 )
 app.state.negotiation_engine = negotiation_engine
 

@@ -37,7 +37,9 @@ MemoryService then generates or reuses an immutable single-user negotiator profi
 when at least two persisted Debrief/Strategy pairs exist. The completion response
 includes the Debrief, Strategy, and optional historically associated Memory.
 AdaptiveContextService provides a read-only runtime projection of the latest
-Memory. None of these artifacts has a standalone API.
+Memory. A compiled LangGraph workflow now coordinates the completion lifecycle
+through these existing services while NegotiationEngine preserves the API-facing
+result contract. None of these artifacts has a standalone API.
 
 ## Current functionality
 
@@ -51,6 +53,8 @@ Memory. None of these artifacts has a standalone API.
 - Idempotent completion responses with stable Debrief, Strategy, and optional
   Memory identifiers and timestamps
 - Deterministic orchestration through NegotiationEngine
+- Linear LangGraph completion workflow with explicit validation, Debrief,
+  Strategy, Memory, and completion nodes
 - Validation that an opponent response follows a user turn
 - LLM-assisted structured negotiation-state extraction
 - LLM-assisted coach observation extraction with optional historical Adaptive
@@ -83,6 +87,23 @@ flowchart TD
     Config["Application configuration"]
     Factory["LLM provider factory"]
     Engine["NegotiationEngine"]
+
+    subgraph Completion["Completion workflow"]
+        CompletionWorkflow["CompletionWorkflowService"]
+        CompletionGraph["Compiled LangGraph"]
+        ValidateNode["Validate session and turns"]
+        DebriefNode["Create or reuse Debrief"]
+        StrategyNode["Create or reuse Strategy"]
+        MemoryNode["Create, reuse, or omit Memory"]
+        CompleteNode["Mark session completed"]
+
+        CompletionWorkflow --> CompletionGraph
+        CompletionGraph --> ValidateNode
+        ValidateNode --> DebriefNode
+        DebriefNode --> StrategyNode
+        StrategyNode --> MemoryNode
+        MemoryNode --> CompleteNode
+    end
 
     subgraph Scenario["Scenario subsystem"]
         ScenarioAPI["Scenario API"]
@@ -199,11 +220,13 @@ flowchart TD
     CompletionAPI --> Engine
     Engine -->|"request / response result"| OpponentService
     Engine -->|"complete ordered history"| CoachService
-    Engine -->|"validate ordered turns"| TurnService
-    Engine -->|"retrieve or generate debrief"| DebriefService
-    Engine -->|"retrieve or generate strategy"| StrategyService
-    Engine -->|"retrieve or generate eligible memory"| MemoryService
-    Engine -->|"mark completed"| SessionService
+    Engine -->|"typed completion result"| CompletionWorkflow
+    ValidateNode --> SessionService
+    ValidateNode --> TurnService
+    DebriefNode --> DebriefService
+    StrategyNode --> StrategyService
+    MemoryNode --> MemoryService
+    CompleteNode --> SessionService
 
     Config --> Factory
     Factory -->|"LLM_PROVIDER=fake"| Fake
@@ -223,19 +246,21 @@ Repositories are instantiated once for the application and shared by the service
 that need them. This lets an opponent response observe scenarios, sessions, and
 turns created through the API, while CoachService retains append-only observations
 for completed exchanges. DebriefService reads only those stored observations and
-persists at most one synthesized debrief per session. NegotiationEngine invokes it
-only after an explicit completion request passes session and turn validation.
+persists at most one synthesized debrief per session.
 StrategyService reads only a persisted NegotiationDebriefRecord and stores at most
-one strategy per session. NegotiationEngine invokes it after the debrief is
-available and before marking the session completed.
+one strategy per session.
 MemoryService lists persisted strategies, resolves the corresponding debriefs by
 session ID, and stores each eligible profile as a new immutable version.
-NegotiationEngine invokes it after Strategy is available and before marking the
-session completed. Each completion-triggered version is associated internally
-with its triggering session.
+Each completion-triggered version is associated internally with its triggering
+session.
 AdaptiveContextService depends only on MemoryService. It reads the latest Memory
 on every request and projects selected fields into a new immutable runtime
 context without persistence, caching, LLM calls, or repository access.
+CompletionWorkflowService compiles one linear LangGraph at construction and
+coordinates these existing services through explicit validation, Debrief,
+Strategy, Memory, and completion nodes. The workflow has no repository
+dependencies. It returns domain records in a typed internal result, which
+NegotiationEngine maps into its existing completion result.
 
 ## End-to-end opponent workflow
 
@@ -272,20 +297,25 @@ context without persistence, caching, LLM calls, or repository access.
 
 1. The client explicitly requests completion; negotiation content and LLM output
    never complete a session automatically.
-2. NegotiationEngine validates the session, ordered turns, latest opponent turn,
-   an adjacent user-opponent exchange, and available coach observations.
-3. DebriefService reuses an existing debrief or generates one only from stored
-   CoachObservationRecords.
-4. StrategyService reuses an existing strategy or generates one only from the
-   persisted debrief.
-5. MemoryService reuses the Memory associated with this completion, generates a
-   new version when at least two complete artifact pairs exist, or returns no
+2. NegotiationEngine delegates once to CompletionWorkflowService.
+3. The workflow validation node validates the session. For an incomplete session,
+   it also loads ordered turns and requires a latest opponent turn and at least
+   one adjacent user-opponent exchange.
+4. The Debrief node reuses an existing debrief or delegates generation to
+   DebriefService, which uses stored CoachObservationRecords.
+5. The Strategy node reuses an existing strategy or delegates generation to
+   StrategyService using the persisted debrief.
+6. The Memory node reuses the Memory associated with this completion, delegates
+   generation when at least two complete artifact pairs exist, or records no
    Memory when history is still insufficient.
-6. NegotiationService transitions `created` or `active` to `completed` and updates
-   `updated_at`, which is returned as `completed_at`.
-7. Repeated completion calls return the original timestamp, Debrief, Strategy,
-   and historically associated optional Memory without revalidating turns or
-   calling the LLM again.
+7. The final node delegates to NegotiationService to transition `created` or
+   `active` to `completed` and update `updated_at`, which is returned as
+   `completed_at`.
+8. Repeated completion calls follow the same linear graph but use status-aware
+   nodes: turn validation and all artifact generation are skipped, the persisted
+   Debrief and Strategy are required, the associated Memory is retrieved when
+   present, and `mark_completed` is not called. The original timestamp and
+   artifacts are returned without LLM calls.
 
 Illustrative conversation:
 
@@ -588,6 +618,9 @@ uv run ruff format --check .
 - In-memory repositories do not provide a transaction spanning debrief and
   strategy persistence and the session-status update. A retry reuses artifacts
   persisted before a later completion step failed.
+- The completion graph is synchronous, linear, and stateless. It does not use
+  checkpointing, conditional branches, retries, streaming, or human-in-the-loop
+  controls.
 - Strategies are persisted only in memory and have no standalone retrieval API.
 - Negotiator Memory is versioned only in memory, is scoped to the single-user MVP,
   and has no standalone API.
@@ -623,12 +656,12 @@ Completed:
 - [x] Read-only Adaptive Context projection from latest Memory
 - [x] Coach Adaptive Integration using optional historical context
 - [x] Opponent Adaptive Integration using optional historical risk testing
+- [x] Linear LangGraph orchestration for the negotiation completion lifecycle
 
 Planned:
 
 - [ ] Richer multi-round opponent behavior
 - [ ] Standalone Coach, debrief, strategy, and memory APIs
-- [ ] LangGraph orchestration
 - [ ] Adaptive difficulty
 - [ ] Durable authenticated negotiator profiles
 - [ ] Persistent database

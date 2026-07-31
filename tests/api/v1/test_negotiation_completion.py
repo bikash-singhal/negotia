@@ -36,6 +36,7 @@ from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
 from app.services.strategy import StrategyExtractor, StrategyService
+from app.workflows.completion.service import CompletionWorkflowService
 
 
 @dataclass(frozen=True)
@@ -148,14 +149,17 @@ def completion_context() -> Iterator[CompletionContext]:
     app.state.strategy_service = strategy_service
     app.state.memory_service = memory_service
     app.state.adaptive_context_service = adaptive_context_service
-    app.state.negotiation_engine = NegotiationEngine(
-        opponent_service,
-        coach_service,
+    completion_workflow_service = CompletionWorkflowService(
         negotiation_service,
         turn_service,
         debrief_service,
         strategy_service,
         memory_service,
+    )
+    app.state.negotiation_engine = NegotiationEngine(
+        opponent_service,
+        coach_service,
+        completion_workflow_service,
     )
     try:
         yield CompletionContext(
