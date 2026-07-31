@@ -8,10 +8,10 @@ from app.api.v1.router import router as api_v1_router
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging_config import configure_logging
+from app.database.repositories.coach import SQLCoachObservationRepository
 from app.database.repositories.negotiation import SQLNegotiationRepository
 from app.database.repositories.negotiation_turn import SQLNegotiationTurnRepository
 from app.database.repositories.scenario import SQLScenarioRepository
-from app.domains.coach.repository import CoachObservationRepository
 from app.domains.debrief.repository import NegotiationDebriefRepository
 from app.domains.memory.repository import NegotiatorMemoryRepository
 from app.domains.negotiation.service import NegotiationService
@@ -67,7 +67,7 @@ coach_observation_extractor = CoachObservationExtractor(
     CoachPromptBuilder(),
     llm_provider,
 )
-coach_observation_repository = CoachObservationRepository()
+coach_observation_repository = SQLCoachObservationRepository()
 debrief_extractor = DebriefExtractor(
     DebriefPromptBuilder(),
     llm_provider,
