@@ -1,4 +1,5 @@
 import json
+import logging
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -9,8 +10,11 @@ from app.domains.negotiation_state.exceptions import (
 )
 from app.domains.negotiation_state.models import NegotiationState
 from app.domains.negotiation_turn.models import NegotiationTurn
+from app.llm.observability import generate_with_observability
 from app.llm.provider import LLMProvider
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
+
+logger = logging.getLogger(__name__)
 
 
 class _NegotiationStatePayload(BaseModel):
@@ -34,9 +38,13 @@ class NegotiationStateExtractor:
         self._llm_provider = llm_provider
 
     def extract(self, turns: list[NegotiationTurn]) -> NegotiationState:
-        response = self._llm_provider.generate(
+        response = generate_with_observability(
+            self._llm_provider,
+            logger,
+            "negotiation_state_extraction",
             system_prompt=self._prompt_builder.build_system_prompt(),
             user_prompt=self._prompt_builder.build_user_prompt(turns),
+            session_id=turns[0].session_id if turns else None,
         ).strip()
         if not response:
             raise EmptyNegotiationStateResponseError()

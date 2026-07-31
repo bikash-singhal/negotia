@@ -1,6 +1,9 @@
+import logging
 from itertools import pairwise
+from time import perf_counter
 from uuid import UUID
 
+from app.core.observability import elapsed_ms, log_event
 from app.database.unit_of_work import CompletionUnitOfWorkFactory
 from app.domains.debrief.models import NegotiationDebriefRecord
 from app.domains.memory.models import NegotiatorMemoryRecord
@@ -30,6 +33,8 @@ from app.workflows.completion.state import (
     CompletionWorkflowUpdate,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class CompletionWorkflowNodes:
     def __init__(
@@ -58,13 +63,25 @@ class CompletionWorkflowNodes:
             turns = self._negotiation_turn_service.list_turns(session_id)
             self._validate_completion_turns(session_id, turns)
 
+        log_event(
+            logger,
+            logging.INFO,
+            "completion_validation_passed",
+            operation="complete_negotiation",
+            session_id=session_id,
+            stage="validation",
+            outcome="success",
+        )
+
         return {"session": session}
 
     def create_or_reuse_debrief(
         self,
         state: CompletionWorkflowState,
     ) -> CompletionWorkflowUpdate:
+        started_at = perf_counter()
         session = self._get_session(state)
+        self._log_artifact_preparation_started(session.id, "debrief")
         record = self._debrief_service.get_for_session(session.id)
         prepared = False
         if record is None:
@@ -73,13 +90,21 @@ class CompletionWorkflowNodes:
             record = self._debrief_service.prepare_for_session(session.id)
             prepared = True
 
+        self._log_artifact_preparation_completed(
+            session.id,
+            "debrief",
+            started_at,
+        )
+
         return {"debrief_record": record, "debrief_prepared": prepared}
 
     def create_or_reuse_strategy(
         self,
         state: CompletionWorkflowState,
     ) -> CompletionWorkflowUpdate:
+        started_at = perf_counter()
         session = self._get_session(state)
+        self._log_artifact_preparation_started(session.id, "strategy")
         debrief_record = self._get_debrief_record(state)
         record = self._strategy_service.get_for_session(session.id)
         prepared = False
@@ -92,13 +117,21 @@ class CompletionWorkflowNodes:
             )
             prepared = True
 
+        self._log_artifact_preparation_completed(
+            session.id,
+            "strategy",
+            started_at,
+        )
+
         return {"strategy_record": record, "strategy_prepared": prepared}
 
     def create_or_reuse_memory(
         self,
         state: CompletionWorkflowState,
     ) -> CompletionWorkflowUpdate:
+        started_at = perf_counter()
         session = self._get_session(state)
+        self._log_artifact_preparation_started(session.id, "memory")
         record = self._memory_service.get_by_trigger_session(session.id)
         prepared = False
         if record is None and session.status is not NegotiationStatus.COMPLETED:
@@ -109,6 +142,12 @@ class CompletionWorkflowNodes:
             )
             prepared = record is not None
 
+        self._log_artifact_preparation_completed(
+            session.id,
+            "memory",
+            started_at,
+        )
+
         return {"memory_record": record, "memory_prepared": prepared}
 
     def finalize_completion(
@@ -116,84 +155,124 @@ class CompletionWorkflowNodes:
         state: CompletionWorkflowState,
     ) -> CompletionWorkflowUpdate:
         session_id = self._get_session(state).id
-        with self._unit_of_work_factory() as unit_of_work:
-            session = unit_of_work.negotiation_repository.get_for_update(session_id)
-            if session is None:
-                raise NegotiationSessionNotFoundError(session_id)
+        started_at = perf_counter()
+        committed = False
+        log_event(
+            logger,
+            logging.INFO,
+            "finalization_started",
+            operation="complete_negotiation",
+            session_id=session_id,
+            stage="finalization",
+        )
+        try:
+            with self._unit_of_work_factory() as unit_of_work:
+                session = unit_of_work.negotiation_repository.get_for_update(session_id)
+                if session is None:
+                    raise NegotiationSessionNotFoundError(session_id)
 
-            debrief_record = unit_of_work.debrief_repository.get_by_session(session_id)
-            strategy_record = unit_of_work.strategy_repository.get_by_session(
-                session_id
-            )
-            memory_record = unit_of_work.memory_repository.get_by_trigger_session(
-                session_id
-            )
+                debrief_record = unit_of_work.debrief_repository.get_by_session(
+                    session_id
+                )
+                strategy_record = unit_of_work.strategy_repository.get_by_session(
+                    session_id
+                )
+                memory_record = unit_of_work.memory_repository.get_by_trigger_session(
+                    session_id
+                )
 
-            if session.status is NegotiationStatus.COMPLETED:
+                if session.status is NegotiationStatus.COMPLETED:
+                    if debrief_record is None:
+                        raise CompletedNegotiationMissingDebriefError(session_id)
+                    if strategy_record is None:
+                        raise CompletedNegotiationMissingStrategyError(session_id)
+                    self._validate_strategy_lineage(
+                        session_id,
+                        debrief_record.id,
+                        strategy_record,
+                    )
+                    return {
+                        "session": session,
+                        "debrief_record": debrief_record,
+                        "strategy_record": strategy_record,
+                        "memory_record": memory_record,
+                    }
+
+                if session.status not in {
+                    NegotiationStatus.CREATED,
+                    NegotiationStatus.ACTIVE,
+                }:
+                    raise InvalidNegotiationStatusTransitionError(
+                        session_id,
+                        session.status,
+                        NegotiationStatus.COMPLETED,
+                    )
+
+                prepared_debrief = self._get_debrief_record(state)
+                self._validate_debrief_lineage(session_id, prepared_debrief)
                 if debrief_record is None:
-                    raise CompletedNegotiationMissingDebriefError(session_id)
+                    debrief_record = unit_of_work.debrief_repository.create(
+                        prepared_debrief
+                    )
+
+                prepared_strategy = self._get_strategy_record(state)
+                if state.get("strategy_prepared", False):
+                    self._validate_strategy_lineage(
+                        session_id,
+                        debrief_record.id,
+                        prepared_strategy,
+                    )
                 if strategy_record is None:
-                    raise CompletedNegotiationMissingStrategyError(session_id)
-                self._validate_strategy_lineage(
-                    session_id,
-                    debrief_record.id,
-                    strategy_record,
-                )
-                return {
-                    "session": session,
-                    "debrief_record": debrief_record,
-                    "strategy_record": strategy_record,
-                    "memory_record": memory_record,
-                }
+                    self._validate_strategy_lineage(
+                        session_id,
+                        debrief_record.id,
+                        prepared_strategy,
+                    )
+                    strategy_record = unit_of_work.strategy_repository.create(
+                        prepared_strategy
+                    )
+                else:
+                    self._validate_strategy_lineage(
+                        session_id,
+                        debrief_record.id,
+                        strategy_record,
+                    )
 
-            if session.status not in {
-                NegotiationStatus.CREATED,
-                NegotiationStatus.ACTIVE,
-            }:
-                raise InvalidNegotiationStatusTransitionError(
-                    session_id,
-                    session.status,
-                    NegotiationStatus.COMPLETED,
-                )
+                prepared_memory = state.get("memory_record")
+                if memory_record is None and prepared_memory is not None:
+                    self._validate_memory_lineage(session_id, prepared_memory)
+                    memory_record = unit_of_work.memory_repository.create(
+                        prepared_memory
+                    )
 
-            prepared_debrief = self._get_debrief_record(state)
-            self._validate_debrief_lineage(session_id, prepared_debrief)
-            if debrief_record is None:
-                debrief_record = unit_of_work.debrief_repository.create(
-                    prepared_debrief
+                self._negotiation_service.prepare_completion(session)
+                session = unit_of_work.negotiation_repository.update(session)
+                unit_of_work.commit()
+                committed = True
+        except Exception:
+            if not committed:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "finalization_rolled_back",
+                    operation="complete_negotiation",
+                    session_id=session_id,
+                    stage="finalization",
+                    duration_ms=elapsed_ms(started_at),
+                    outcome="rolled_back",
                 )
+            raise
 
-            prepared_strategy = self._get_strategy_record(state)
-            if state.get("strategy_prepared", False):
-                self._validate_strategy_lineage(
-                    session_id,
-                    debrief_record.id,
-                    prepared_strategy,
-                )
-            if strategy_record is None:
-                self._validate_strategy_lineage(
-                    session_id,
-                    debrief_record.id,
-                    prepared_strategy,
-                )
-                strategy_record = unit_of_work.strategy_repository.create(
-                    prepared_strategy
-                )
-            else:
-                self._validate_strategy_lineage(
-                    session_id,
-                    debrief_record.id,
-                    strategy_record,
-                )
-
-            prepared_memory = state.get("memory_record")
-            if memory_record is None and prepared_memory is not None:
-                self._validate_memory_lineage(session_id, prepared_memory)
-                memory_record = unit_of_work.memory_repository.create(prepared_memory)
-
-            self._negotiation_service.prepare_completion(session)
-            session = unit_of_work.negotiation_repository.update(session)
-            unit_of_work.commit()
+        log_event(
+            logger,
+            logging.INFO,
+            "finalization_committed",
+            operation="complete_negotiation",
+            session_id=session_id,
+            stage="finalization",
+            duration_ms=elapsed_ms(started_at),
+            outcome="success",
+        )
 
         return {
             "session": session,
@@ -201,6 +280,34 @@ class CompletionWorkflowNodes:
             "strategy_record": strategy_record,
             "memory_record": memory_record,
         }
+
+    @staticmethod
+    def _log_artifact_preparation_started(session_id: UUID, stage: str) -> None:
+        log_event(
+            logger,
+            logging.INFO,
+            "artifact_preparation_started",
+            operation="complete_negotiation",
+            session_id=session_id,
+            stage=stage,
+        )
+
+    @staticmethod
+    def _log_artifact_preparation_completed(
+        session_id: UUID,
+        stage: str,
+        started_at: float,
+    ) -> None:
+        log_event(
+            logger,
+            logging.INFO,
+            "artifact_preparation_completed",
+            operation="complete_negotiation",
+            session_id=session_id,
+            stage=stage,
+            duration_ms=elapsed_ms(started_at),
+            outcome="success",
+        )
 
     @staticmethod
     def _get_session(state: CompletionWorkflowState) -> NegotiationSession:

@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Mapping
 
 from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
@@ -7,12 +8,14 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.exceptions import AppException
+from app.core.observability import log_event
+from app.core.request_context import REQUEST_ID_HEADER, request_id_from_request
 
 logger = logging.getLogger(__name__)
 
 
 async def _handle_app_exception(
-    _request: Request,
+    request: Request,
     exc: AppException,
 ) -> JSONResponse:
     return JSONResponse(
@@ -23,11 +26,12 @@ async def _handle_app_exception(
                 "message": exc.message,
             }
         },
+        headers=_request_id_headers(request),
     )
 
 
 async def _handle_http_exception(
-    _request: Request,
+    request: Request,
     exc: StarletteHTTPException,
 ) -> JSONResponse:
     error_code = {
@@ -43,12 +47,12 @@ async def _handle_http_exception(
                 "message": str(exc.detail),
             }
         },
-        headers=exc.headers,
+        headers=_request_id_headers(request, exc.headers),
     )
 
 
 async def _handle_validation_exception(
-    _request: Request,
+    request: Request,
     exc: RequestValidationError,
 ) -> JSONResponse:
     return JSONResponse(
@@ -60,14 +64,26 @@ async def _handle_validation_exception(
                 "details": jsonable_encoder(exc.errors()),
             }
         },
+        headers=_request_id_headers(request),
     )
 
 
 async def _handle_unexpected_exception(
-    _request: Request,
+    request: Request,
     exc: Exception,
 ) -> JSONResponse:
-    logger.exception("Unexpected application error", exc_info=exc)
+    request_id = request_id_from_request(request)
+    safe_exception = RuntimeError("Unexpected application error")
+    log_event(
+        logger,
+        logging.ERROR,
+        "unexpected_exception",
+        message=f"Unexpected application error ({type(exc).__name__})",
+        request_id=request_id,
+        route=request.url.path,
+        outcome="failure",
+        exc_info=(RuntimeError, safe_exception, exc.__traceback__),
+    )
 
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -77,7 +93,17 @@ async def _handle_unexpected_exception(
                 "message": "An unexpected error occurred",
             }
         },
+        headers={REQUEST_ID_HEADER: request_id},
     )
+
+
+def _request_id_headers(
+    request: Request,
+    headers: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    response_headers = dict(headers or {})
+    response_headers[REQUEST_ID_HEADER] = request_id_from_request(request)
+    return response_headers
 
 
 def register_exception_handlers(app: FastAPI) -> None:

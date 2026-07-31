@@ -1,6 +1,10 @@
+import logging
+from time import perf_counter
 from uuid import UUID
 
+from app.core.observability import elapsed_ms, log_event
 from app.database.unit_of_work import CompletionUnitOfWorkFactory
+from app.domains.negotiation.exceptions import CompletionArtifactsChangedError
 from app.domains.negotiation.service import NegotiationService
 from app.domains.negotiation_turn.service import NegotiationTurnService
 from app.services.debrief import DebriefService
@@ -12,6 +16,8 @@ from app.workflows.completion.state import (
     CompletionWorkflowResult,
     CompletionWorkflowState,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class CompletionWorkflowService:
@@ -35,19 +41,76 @@ class CompletionWorkflowService:
         self._graph: CompletionGraph = build_completion_graph(self._nodes)
 
     def run(self, session_id: UUID) -> CompletionWorkflowResult:
-        final_state = self._graph.invoke(CompletionWorkflowState(session_id=session_id))
-        required_fields = {
-            "session",
-            "debrief_record",
-            "strategy_record",
-            "memory_record",
-        }
-        if not required_fields.issubset(final_state):
-            raise RuntimeError("Completion workflow returned incomplete state.")
+        started_at = perf_counter()
+        log_event(
+            logger,
+            logging.INFO,
+            "completion_started",
+            operation="complete_negotiation",
+            session_id=session_id,
+            stage="workflow",
+        )
 
-        return CompletionWorkflowResult(
-            session=final_state["session"],
-            debrief_record=final_state["debrief_record"],
-            strategy_record=final_state["strategy_record"],
-            memory_record=final_state["memory_record"],
+        try:
+            try:
+                final_state = self._graph.invoke(
+                    CompletionWorkflowState(session_id=session_id)
+                )
+            except CompletionArtifactsChangedError:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "completion_retry_due_to_artifact_change",
+                    operation="complete_negotiation",
+                    session_id=session_id,
+                    stage="finalization",
+                    duration_ms=elapsed_ms(started_at),
+                    outcome="retrying",
+                )
+                final_state = self._graph.invoke(
+                    CompletionWorkflowState(session_id=session_id)
+                )
+
+            required_fields = {
+                "session",
+                "debrief_record",
+                "strategy_record",
+                "memory_record",
+            }
+            if not required_fields.issubset(final_state):
+                raise RuntimeError("Completion workflow returned incomplete state.")
+
+            result = CompletionWorkflowResult(
+                session=final_state["session"],
+                debrief_record=final_state["debrief_record"],
+                strategy_record=final_state["strategy_record"],
+                memory_record=final_state["memory_record"],
+            )
+        except Exception:
+            self._log_completion_failed(session_id, started_at)
+            raise
+
+        log_event(
+            logger,
+            logging.INFO,
+            "completion_succeeded",
+            operation="complete_negotiation",
+            session_id=session_id,
+            stage="workflow",
+            duration_ms=elapsed_ms(started_at),
+            outcome="success",
+        )
+        return result
+
+    @staticmethod
+    def _log_completion_failed(session_id: UUID, started_at: float) -> None:
+        log_event(
+            logger,
+            logging.ERROR,
+            "completion_failed",
+            operation="complete_negotiation",
+            session_id=session_id,
+            stage="workflow",
+            duration_ms=elapsed_ms(started_at),
+            outcome="failure",
         )

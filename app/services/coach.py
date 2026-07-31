@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -17,9 +18,12 @@ from app.domains.negotiation_turn.models import (
     NegotiationTurn,
     NegotiationTurnSpeaker,
 )
+from app.llm.observability import generate_with_observability
 from app.llm.provider import LLMProvider
 from app.prompts.coach import CoachPromptBuilder
 from app.services.adaptive_context import AdaptiveContextService
+
+logger = logging.getLogger(__name__)
 
 
 class _CoachObservationPayload(BaseModel):
@@ -46,9 +50,13 @@ class CoachObservationExtractor:
         turns: list[NegotiationTurn],
         adaptive_context: AdaptiveContext | None = None,
     ) -> CoachObservation:
-        response = self._llm_provider.generate(
+        response = generate_with_observability(
+            self._llm_provider,
+            logger,
+            "coach_observation_extraction",
             system_prompt=self._prompt_builder.build_system_prompt(adaptive_context),
             user_prompt=self._prompt_builder.build_user_prompt(turns),
+            session_id=turns[0].session_id if turns else None,
         ).strip()
         if not response:
             raise EmptyCoachObservationResponseError()

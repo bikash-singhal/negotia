@@ -1,8 +1,8 @@
 import logging
-from time import perf_counter
 from typing import Any
 
 from app.aws.session import get_bedrock_runtime_client
+from app.core.observability import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -16,49 +16,41 @@ class BedrockLLMProvider:
         self._model_id = model_id
         self._client = client if client is not None else get_bedrock_runtime_client()
 
-        logger.info(
-            "Initialized Bedrock LLM provider with model ID: %s",
-            self._model_id,
+        log_event(
+            logger,
+            logging.INFO,
+            "provider_initialized",
+            operation="provider_initialization",
+            provider=type(self).__name__,
+            model_id=self._model_id,
+            outcome="success",
         )
+
+    @property
+    def model_id(self) -> str:
+        return self._model_id
 
     def generate(
         self,
         system_prompt: str,
         user_prompt: str,
     ) -> str:
-        logger.debug(
-            "Starting Bedrock request for model ID: %s",
-            self._model_id,
+        response = self._client.converse(
+            modelId=self._model_id,
+            system=[
+                {
+                    "text": system_prompt,
+                }
+            ],
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "text": user_prompt,
+                        }
+                    ],
+                }
+            ],
         )
-        start = perf_counter()
-
-        try:
-            response = self._client.converse(
-                modelId=self._model_id,
-                system=[
-                    {
-                        "text": system_prompt,
-                    }
-                ],
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "text": user_prompt,
-                            }
-                        ],
-                    }
-                ],
-            )
-        except Exception:
-            logger.exception(
-                "Bedrock request failed for model ID: %s",
-                self._model_id,
-            )
-            raise
-
-        elapsed = perf_counter() - start
-        logger.debug("Bedrock request completed in %.3f seconds", elapsed)
-
         return response["output"]["message"]["content"][0]["text"]

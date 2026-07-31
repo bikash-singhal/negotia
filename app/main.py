@@ -8,6 +8,7 @@ from app.api.v1.router import router as api_v1_router
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging_config import configure_logging
+from app.core.request_context import request_context_middleware
 from app.database.repositories.coach import SQLCoachObservationRepository
 from app.database.repositories.debrief import SQLNegotiationDebriefRepository
 from app.database.repositories.memory import SQLNegotiatorMemoryRepository
@@ -56,6 +57,7 @@ app = FastAPI(
     version=settings.api_version,
     lifespan=lifespan,
 )
+app.middleware("http")(request_context_middleware)
 scenario_repository = SQLScenarioRepository()
 negotiation_repository = SQLNegotiationRepository()
 turn_repository = SQLNegotiationTurnRepository()

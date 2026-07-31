@@ -1,10 +1,13 @@
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from time import perf_counter
 from types import TracebackType
 from typing import Self
 
 from sqlalchemy.orm import Session
 
+from app.core.observability import elapsed_ms, log_event
 from app.database.repositories._session import SessionFactory
 from app.database.repositories.debrief import SQLNegotiationDebriefRepository
 from app.database.repositories.memory import SQLNegotiatorMemoryRepository
@@ -15,6 +18,8 @@ from app.domains.debrief.repository import NegotiationDebriefRepository
 from app.domains.memory.repository import NegotiatorMemoryRepository
 from app.domains.negotiation.repository import NegotiationRepository
 from app.domains.strategy.repository import NegotiationStrategyRepository
+
+logger = logging.getLogger(__name__)
 
 
 class CompletionUnitOfWork(ABC):
@@ -61,6 +66,8 @@ class SQLCompletionUnitOfWork(CompletionUnitOfWork):
         self._session: Session | None = None
         self._has_entered = False
         self._transaction_finished = False
+        self._transaction_failure_logged = False
+        self._started_at: float | None = None
         self._negotiation_repository: SQLNegotiationRepository | None = None
         self._debrief_repository: SQLNegotiationDebriefRepository | None = None
         self._strategy_repository: SQLNegotiationStrategyRepository | None = None
@@ -96,6 +103,7 @@ class SQLCompletionUnitOfWork(CompletionUnitOfWork):
 
         self._has_entered = True
         self._session = self._session_factory()
+        self._started_at = perf_counter()
         self._negotiation_repository = SQLNegotiationRepository(session=self._session)
         self._debrief_repository = SQLNegotiationDebriefRepository(
             session=self._session
@@ -104,6 +112,13 @@ class SQLCompletionUnitOfWork(CompletionUnitOfWork):
             session=self._session
         )
         self._memory_repository = SQLNegotiatorMemoryRepository(session=self._session)
+        log_event(
+            logger,
+            logging.INFO,
+            "transaction_started",
+            operation="completion_transaction",
+            stage="finalization",
+        )
         return self
 
     def __exit__(
@@ -115,7 +130,15 @@ class SQLCompletionUnitOfWork(CompletionUnitOfWork):
         session = self._require_session()
         try:
             if exception_type is not None or not self._transaction_finished:
-                session.rollback()
+                if exception_type is not None and not self._transaction_failure_logged:
+                    self._log_transaction_failed()
+                try:
+                    session.rollback()
+                except Exception:
+                    self._log_transaction_failed()
+                    raise
+                else:
+                    self._log_transaction_rolled_back()
         finally:
             session.close()
             self._session = None
@@ -124,16 +147,36 @@ class SQLCompletionUnitOfWork(CompletionUnitOfWork):
             self._strategy_repository = None
             self._memory_repository = None
             self._transaction_finished = False
+            self._transaction_failure_logged = False
+            self._started_at = None
 
     def commit(self) -> None:
         session = self._require_active_transaction()
-        session.commit()
+        try:
+            session.commit()
+        except Exception:
+            self._log_transaction_failed()
+            raise
         self._transaction_finished = True
+        log_event(
+            logger,
+            logging.INFO,
+            "transaction_committed",
+            operation="completion_transaction",
+            stage="finalization",
+            duration_ms=self._duration_ms(),
+            outcome="success",
+        )
 
     def rollback(self) -> None:
         session = self._require_active_transaction()
-        session.rollback()
+        try:
+            session.rollback()
+        except Exception:
+            self._log_transaction_failed()
+            raise
         self._transaction_finished = True
+        self._log_transaction_rolled_back()
 
     def _require_session(self) -> Session:
         if self._session is None:
@@ -145,3 +188,29 @@ class SQLCompletionUnitOfWork(CompletionUnitOfWork):
         if self._transaction_finished:
             raise RuntimeError("The Unit of Work transaction has already finished.")
         return session
+
+    def _duration_ms(self) -> float | None:
+        return elapsed_ms(self._started_at) if self._started_at is not None else None
+
+    def _log_transaction_rolled_back(self) -> None:
+        log_event(
+            logger,
+            logging.INFO,
+            "transaction_rolled_back",
+            operation="completion_transaction",
+            stage="finalization",
+            duration_ms=self._duration_ms(),
+            outcome="rolled_back",
+        )
+
+    def _log_transaction_failed(self) -> None:
+        self._transaction_failure_logged = True
+        log_event(
+            logger,
+            logging.ERROR,
+            "transaction_failed",
+            operation="completion_transaction",
+            stage="finalization",
+            duration_ms=self._duration_ms(),
+            outcome="failure",
+        )

@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -17,8 +18,11 @@ from app.domains.debrief.models import (
     NegotiationDebriefRecord,
 )
 from app.domains.debrief.repository import NegotiationDebriefRepository
+from app.llm.observability import generate_with_observability
 from app.llm.provider import LLMProvider
 from app.prompts.debrief import DebriefPromptBuilder
+
+logger = logging.getLogger(__name__)
 
 
 class _NegotiationDebriefPayload(BaseModel):
@@ -48,9 +52,13 @@ class DebriefExtractor:
         if not observations:
             raise NoCoachObservationsError()
 
-        response = self._llm_provider.generate(
+        response = generate_with_observability(
+            self._llm_provider,
+            logger,
+            "debrief_extraction",
             system_prompt=self._prompt_builder.build_system_prompt(),
             user_prompt=self._prompt_builder.build_user_prompt(observations),
+            session_id=observations[0].session_id,
         ).strip()
         if not response:
             raise EmptyDebriefResponseError()

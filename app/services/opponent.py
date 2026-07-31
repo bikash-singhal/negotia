@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -18,10 +19,13 @@ from app.domains.negotiation_turn.models import (
 from app.domains.negotiation_turn.repository import NegotiationTurnRepository
 from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.repository import ScenarioRepository
+from app.llm.observability import generate_with_observability
 from app.llm.provider import LLMProvider
 from app.prompts.opponent import OpponentPromptBuilder
 from app.services.adaptive_context import AdaptiveContextService
 from app.services.negotiation_state import NegotiationStateExtractor
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -82,9 +86,13 @@ class OpponentService:
             adaptive_context,
         )
         user_prompt = self._prompt_builder.build_user_prompt(turns)
-        generated_content = self._llm_provider.generate(
+        generated_content = generate_with_observability(
+            self._llm_provider,
+            logger,
+            "opponent_response_generation",
             system_prompt=system_prompt,
             user_prompt=user_prompt,
+            session_id=session_id,
         ).strip()
         if not generated_content:
             raise EmptyOpponentResponseError(session_id)

@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -24,8 +25,11 @@ from app.domains.strategy.models import (
     NegotiationTactic,
 )
 from app.domains.strategy.repository import NegotiationStrategyRepository
+from app.llm.observability import generate_with_observability
 from app.llm.provider import LLMProvider
 from app.prompts.strategy import StrategyPromptBuilder
+
+logger = logging.getLogger(__name__)
 
 
 class _NegotiationTacticPayload(BaseModel):
@@ -71,9 +75,13 @@ class StrategyExtractor:
         self,
         debrief_record: NegotiationDebriefRecord,
     ) -> NegotiationStrategy:
-        response = self._llm_provider.generate(
+        response = generate_with_observability(
+            self._llm_provider,
+            logger,
+            "strategy_extraction",
             system_prompt=self._prompt_builder.build_system_prompt(),
             user_prompt=self._prompt_builder.build_user_prompt(debrief_record),
+            session_id=debrief_record.session_id,
         ).strip()
         if not response:
             raise EmptyStrategyResponseError()

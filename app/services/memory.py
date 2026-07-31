@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -21,8 +22,11 @@ from app.domains.memory.models import NegotiatorMemory, NegotiatorMemoryRecord
 from app.domains.memory.repository import NegotiatorMemoryRepository
 from app.domains.strategy.models import NegotiationStrategyRecord
 from app.domains.strategy.repository import NegotiationStrategyRepository
+from app.llm.observability import generate_with_observability
 from app.llm.provider import LLMProvider
 from app.prompts.memory import MemoryPromptBuilder
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryExtractor:
@@ -58,7 +62,10 @@ class MemoryExtractor:
             strategy_records,
             key=lambda record: str(record.session_id),
         )
-        response = self._llm_provider.generate(
+        response = generate_with_observability(
+            self._llm_provider,
+            logger,
+            "memory_extraction",
             system_prompt=self._prompt_builder.build_system_prompt(),
             user_prompt=self._prompt_builder.build_user_prompt(
                 ordered_debriefs,
