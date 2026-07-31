@@ -500,7 +500,7 @@ endpoint.
 - PostgreSQL 17
 - SQLAlchemy 2.x and psycopg
 - Alembic database migrations
-- Docker Compose for local PostgreSQL
+- Docker Compose for production-like local API and PostgreSQL execution
 - boto3 and AWS Bedrock Runtime
 - Python standard-library logging
 - pytest, FastAPI TestClient, and HTTPX
@@ -568,12 +568,16 @@ negotia/
 |   |   `-- completion/
 |   `-- main.py
 |-- alembic/
+|-- docker/
+|   `-- entrypoint.sh
 |-- tests/
+|-- .dockerignore
 |-- .env.example
 |-- .gitignore
 |-- .python-version
 |-- alembic.ini
 |-- compose.yaml
+|-- Dockerfile
 |-- pyproject.toml
 |-- README.md
 `-- uv.lock
@@ -638,6 +642,52 @@ uv run uvicorn app.main:app --reload
 ```
 
 The API is available at `http://127.0.0.1:8000`.
+
+## Running the complete stack with Docker Compose
+
+Create the local environment file once, then build and start the API and
+PostgreSQL services:
+
+```powershell
+Copy-Item .env.example .env
+docker compose build api
+docker compose up -d --wait
+```
+
+The API container waits for PostgreSQL to become healthy, runs Alembic migrations,
+and starts Uvicorn only after migration succeeds. The API is available at
+`http://127.0.0.1:8000`, and its container health check calls
+`GET /api/v1/health`.
+
+If port 8000 is already in use, select another host port without changing the
+container port:
+
+```powershell
+$env:API_PORT = "8001"
+docker compose up -d --wait
+```
+
+Inspect service state and API startup logs with:
+
+```powershell
+docker compose ps
+docker compose logs -f api
+```
+
+Apply migrations manually inside the running API container when needed:
+
+```powershell
+docker compose exec api uv run alembic upgrade head
+```
+
+Stop the stack without deleting PostgreSQL data:
+
+```powershell
+docker compose down
+```
+
+PostgreSQL data is stored in the `negotia_postgres_data` named volume. Do not use
+`docker compose down --volumes` when the local data must be retained.
 
 ## Available API endpoints
 
@@ -717,7 +767,8 @@ uv run ruff format --check .
 - Opponent quality depends on the selected provider, model, scenario data, and
   prompt design.
 - The current backend does not include a web frontend.
-- Production deployment infrastructure is not yet included.
+- Cloud deployment infrastructure is not yet included; Docker Compose currently
+  provides production-like local execution only.
 
 ## Roadmap
 
@@ -747,6 +798,7 @@ Completed:
 - [x] Linear LangGraph orchestration for the negotiation completion lifecycle
 - [x] SQLAlchemy repositories for every persisted negotiation aggregate
 - [x] PostgreSQL schema, Alembic migration, and lifecycle persistence verification
+- [x] Production-like local API and PostgreSQL containers with migration startup
 
 Planned:
 
