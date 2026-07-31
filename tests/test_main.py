@@ -1,4 +1,5 @@
 from app.database.repositories.coach import SQLCoachObservationRepository
+from app.database.repositories.debrief import SQLNegotiationDebriefRepository
 from app.database.repositories.negotiation import SQLNegotiationRepository
 from app.database.repositories.negotiation_turn import SQLNegotiationTurnRepository
 from app.database.repositories.scenario import SQLScenarioRepository
@@ -45,6 +46,7 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert isinstance(negotiation_repository, SQLNegotiationRepository)
     assert isinstance(turn_repository, SQLNegotiationTurnRepository)
     assert isinstance(coach_observation_repository, SQLCoachObservationRepository)
+    assert isinstance(debrief_repository, SQLNegotiationDebriefRepository)
     assert negotiation_turn_service._turn_repository is turn_repository
     assert isinstance(adaptive_context_service, AdaptiveContextService)
     assert isinstance(llm_provider, FakeLLMProvider)

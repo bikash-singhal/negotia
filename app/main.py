@@ -9,10 +9,10 @@ from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging_config import configure_logging
 from app.database.repositories.coach import SQLCoachObservationRepository
+from app.database.repositories.debrief import SQLNegotiationDebriefRepository
 from app.database.repositories.negotiation import SQLNegotiationRepository
 from app.database.repositories.negotiation_turn import SQLNegotiationTurnRepository
 from app.database.repositories.scenario import SQLScenarioRepository
-from app.domains.debrief.repository import NegotiationDebriefRepository
 from app.domains.memory.repository import NegotiatorMemoryRepository
 from app.domains.negotiation.service import NegotiationService
 from app.domains.negotiation_turn.service import NegotiationTurnService
@@ -72,7 +72,7 @@ debrief_extractor = DebriefExtractor(
     DebriefPromptBuilder(),
     llm_provider,
 )
-debrief_repository = NegotiationDebriefRepository()
+debrief_repository = SQLNegotiationDebriefRepository()
 debrief_service = DebriefService(
     coach_observation_repository,
     debrief_extractor,
