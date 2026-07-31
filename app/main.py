@@ -13,12 +13,12 @@ from app.database.repositories.debrief import SQLNegotiationDebriefRepository
 from app.database.repositories.negotiation import SQLNegotiationRepository
 from app.database.repositories.negotiation_turn import SQLNegotiationTurnRepository
 from app.database.repositories.scenario import SQLScenarioRepository
+from app.database.repositories.strategy import SQLNegotiationStrategyRepository
 from app.domains.memory.repository import NegotiatorMemoryRepository
 from app.domains.negotiation.service import NegotiationService
 from app.domains.negotiation_turn.service import NegotiationTurnService
 from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.service import ScenarioService
-from app.domains.strategy.repository import NegotiationStrategyRepository
 from app.llm.factory import build_llm_provider
 from app.prompts.coach import CoachPromptBuilder
 from app.prompts.debrief import DebriefPromptBuilder
@@ -82,7 +82,7 @@ strategy_extractor = StrategyExtractor(
     StrategyPromptBuilder(),
     llm_provider,
 )
-strategy_repository = NegotiationStrategyRepository()
+strategy_repository = SQLNegotiationStrategyRepository()
 strategy_service = StrategyService(
     debrief_repository,
     strategy_extractor,
