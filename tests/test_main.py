@@ -1,3 +1,5 @@
+from app.database.repositories.negotiation import SQLNegotiationRepository
+from app.database.repositories.scenario import SQLScenarioRepository
 from app.llm.fake import FakeLLMProvider
 from app.main import (
     adaptive_context_service,
@@ -14,9 +16,11 @@ from app.main import (
     memory_repository,
     memory_service,
     negotiation_engine,
+    negotiation_repository,
     negotiation_service,
     negotiation_turn_service,
     opponent_service,
+    scenario_repository,
     state_extractor,
     strategy_extractor,
     strategy_repository,
@@ -34,6 +38,8 @@ from app.workflows.completion.service import CompletionWorkflowService
 
 
 def test_app_builds_llm_services_with_configured_provider() -> None:
+    assert isinstance(scenario_repository, SQLScenarioRepository)
+    assert isinstance(negotiation_repository, SQLNegotiationRepository)
     assert isinstance(adaptive_context_service, AdaptiveContextService)
     assert isinstance(llm_provider, FakeLLMProvider)
     assert isinstance(coach_observation_extractor, CoachObservationExtractor)

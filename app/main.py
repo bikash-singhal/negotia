@@ -8,15 +8,15 @@ from app.api.v1.router import router as api_v1_router
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging_config import configure_logging
+from app.database.repositories.negotiation import SQLNegotiationRepository
+from app.database.repositories.scenario import SQLScenarioRepository
 from app.domains.coach.repository import CoachObservationRepository
 from app.domains.debrief.repository import NegotiationDebriefRepository
 from app.domains.memory.repository import NegotiatorMemoryRepository
-from app.domains.negotiation.repository import NegotiationRepository
 from app.domains.negotiation.service import NegotiationService
 from app.domains.negotiation_turn.repository import NegotiationTurnRepository
 from app.domains.negotiation_turn.service import NegotiationTurnService
 from app.domains.opponent.profile_builder import OpponentProfileBuilder
-from app.domains.scenario.repository import ScenarioRepository
 from app.domains.scenario.service import ScenarioService
 from app.domains.strategy.repository import NegotiationStrategyRepository
 from app.llm.factory import build_llm_provider
@@ -55,8 +55,8 @@ app = FastAPI(
     version=settings.api_version,
     lifespan=lifespan,
 )
-scenario_repository = ScenarioRepository()
-negotiation_repository = NegotiationRepository()
+scenario_repository = SQLScenarioRepository()
+negotiation_repository = SQLNegotiationRepository()
 turn_repository = NegotiationTurnRepository()
 llm_provider = build_llm_provider(settings)
 state_extractor = NegotiationStateExtractor(

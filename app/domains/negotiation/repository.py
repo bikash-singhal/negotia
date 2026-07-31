@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from app.domains.negotiation.models import NegotiationSession
+from app.domains.negotiation_turn.exceptions import NegotiationSessionNotFoundError
 
 
 class NegotiationRepository:
@@ -16,3 +17,10 @@ class NegotiationRepository:
 
     def list(self) -> list[NegotiationSession]:
         return list(self._sessions.values())
+
+    def update(self, session: NegotiationSession) -> NegotiationSession:
+        if session.id not in self._sessions:
+            raise NegotiationSessionNotFoundError(session.id)
+
+        self._sessions[session.id] = session
+        return session

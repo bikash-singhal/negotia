@@ -76,4 +76,4 @@ class NegotiationService:
 
         session.status = NegotiationStatus.COMPLETED
         session.updated_at = datetime.now(UTC)
-        return session
+        return self._negotiation_repository.update(session)

@@ -1,8 +1,11 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import pytest
+
 from app.domains.negotiation.models import NegotiationSession, NegotiationStatus
 from app.domains.negotiation.repository import NegotiationRepository
+from app.domains.negotiation_turn.exceptions import NegotiationSessionNotFoundError
 
 
 def _create_session() -> NegotiationSession:
@@ -45,3 +48,24 @@ def test_list_returns_all_stored_sessions() -> None:
     second = repository.create(_create_session())
 
     assert repository.list() == [first, second]
+
+
+def test_update_replaces_an_existing_session() -> None:
+    repository = NegotiationRepository()
+    session = repository.create(_create_session())
+    session.status = NegotiationStatus.COMPLETED
+
+    updated = repository.update(session)
+
+    assert updated is session
+    assert repository.get(session.id) is session
+
+
+def test_update_rejects_a_missing_session() -> None:
+    repository = NegotiationRepository()
+    session = _create_session()
+
+    with pytest.raises(NegotiationSessionNotFoundError) as exc_info:
+        repository.update(session)
+
+    assert exc_info.value.session_id == session.id
