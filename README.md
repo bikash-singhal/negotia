@@ -21,12 +21,12 @@ capabilities remain future work.
 
 ## Current status
 
-The Day 5 milestone provides an end-to-end opponent-response workflow through a
-versioned FastAPI API. A scenario supplies the negotiation context, a negotiation
-session references that scenario, ordered turns capture the conversation, and the
-NegotiationEngine coordinates opponent generation and subsequent coach analysis.
-OpponentService uses the configured LLM provider to extract the current negotiation
-state before generating and persisting the next opponent turn.
+Negotia provides an end-to-end opponent-response and negotiation-completion
+workflow through a versioned FastAPI API. A scenario supplies the negotiation
+context, a negotiation session references that scenario, ordered turns capture the
+conversation, and NegotiationEngine coordinates opponent generation and subsequent
+coach analysis. OpponentService uses the configured LLM provider to extract the
+current negotiation state before generating and persisting the next opponent turn.
 
 The default fake provider makes local development and automated tests deterministic
 and does not call AWS. The Bedrock provider is also implemented and can be selected
@@ -39,7 +39,9 @@ includes the Debrief, Strategy, and optional historically associated Memory.
 AdaptiveContextService provides a read-only runtime projection of the latest
 Memory. A compiled LangGraph workflow now coordinates the completion lifecycle
 through these existing services while NegotiationEngine preserves the API-facing
-result contract. None of these artifacts has a standalone API.
+result contract. Scenario, negotiation, turn, coach-observation, Debrief, Strategy,
+and Memory records are persisted in PostgreSQL through explicit SQLAlchemy
+repositories. None of the AI artifacts has a standalone API.
 
 ## Current functionality
 
@@ -60,12 +62,12 @@ result contract. None of these artifacts has a standalone API.
 - LLM-assisted coach observation extraction with optional historical Adaptive
   Context
 - LLM-assisted structured debrief extraction from stored coach observations
-- One in-memory debrief record per negotiation session
+- One PostgreSQL-backed debrief record per negotiation session
 - LLM-assisted structured Strategy extraction from a persisted debrief
-- One in-memory Strategy record per negotiation session
+- One PostgreSQL-backed Strategy record per negotiation session
 - LLM-assisted cross-session negotiator Memory extraction from persisted Debrief
   and Strategy records
-- Immutable in-memory negotiator Memory versions for the single-user MVP
+- Immutable PostgreSQL-backed negotiator Memory versions for the single-user MVP
 - Read-only Adaptive Context projection derived from the latest negotiator Memory
 - Deterministic opponent behavior profiles for each scenario difficulty
 - Scenario-aware system prompts and complete-history user prompts
@@ -73,8 +75,11 @@ result contract. None of these artifacts has a standalone API.
 - AWS Bedrock Runtime provider using the Converse API
 - Configurable `fake` or `bedrock` provider selection
 - Public scenario responses that exclude hidden context and walk-away conditions
-- Shared in-memory repositories for scenarios, sessions, turns, and coach
-  observations
+- SQLAlchemy repositories for scenarios, sessions, turns, coach observations,
+  Debriefs, Strategies, and Memory
+- PostgreSQL foreign keys, uniqueness constraints, and ordered Memory source
+  lineage
+- Alembic-managed schema and PostgreSQL lifecycle integration tests
 - Centralized configuration, logging, and JSON error responses
 - Automated API, domain, service, prompt, provider, and configuration tests
 
@@ -105,10 +110,28 @@ flowchart TD
         MemoryNode --> CompleteNode
     end
 
+    subgraph Persistence["SQL repository layer"]
+        ScenarioRepository["SQLScenarioRepository"]
+        NegotiationRepository["SQLNegotiationRepository"]
+        TurnRepository["SQLNegotiationTurnRepository"]
+        CoachRepository["SQLCoachObservationRepository"]
+        DebriefRepository["SQLNegotiationDebriefRepository"]
+        StrategyRepository["SQLNegotiationStrategyRepository"]
+        MemoryRepository["SQLNegotiatorMemoryRepository"]
+        PostgreSQL[("PostgreSQL")]
+
+        ScenarioRepository --> PostgreSQL
+        NegotiationRepository --> PostgreSQL
+        TurnRepository --> PostgreSQL
+        CoachRepository --> PostgreSQL
+        DebriefRepository --> PostgreSQL
+        StrategyRepository --> PostgreSQL
+        MemoryRepository --> PostgreSQL
+    end
+
     subgraph Scenario["Scenario subsystem"]
         ScenarioAPI["Scenario API"]
         ScenarioService["ScenarioService"]
-        ScenarioRepository["ScenarioRepository"]
         ScenarioAPI --> ScenarioService
         ScenarioService --> ScenarioRepository
     end
@@ -116,7 +139,6 @@ flowchart TD
     subgraph Session["Negotiation Session subsystem"]
         SessionAPI["Negotiation API"]
         SessionService["NegotiationService"]
-        NegotiationRepository["NegotiationRepository"]
         SessionAPI --> SessionService
         SessionService --> NegotiationRepository
         SessionService -->|"validates scenario"| ScenarioRepository
@@ -125,7 +147,6 @@ flowchart TD
     subgraph Turn["Negotiation Turn subsystem"]
         TurnAPI["Turn API"]
         TurnService["NegotiationTurnService"]
-        TurnRepository["NegotiationTurnRepository"]
         TurnAPI --> TurnService
         TurnService --> TurnRepository
         TurnService -->|"validates session"| NegotiationRepository
@@ -151,7 +172,6 @@ flowchart TD
     subgraph Coach["Coach subsystem"]
         CoachService["CoachService"]
         CoachExtractor["CoachObservationExtractor"]
-        CoachRepository["CoachObservationRepository"]
         CoachPrompt["CoachPromptBuilder"]
 
         CoachService --> CoachExtractor
@@ -162,7 +182,6 @@ flowchart TD
     subgraph Debrief["Debrief subsystem"]
         DebriefService["DebriefService"]
         DebriefExtractor["DebriefExtractor"]
-        DebriefRepository["NegotiationDebriefRepository"]
         DebriefPrompt["DebriefPromptBuilder"]
 
         DebriefService -->|"loads stored observations"| CoachRepository
@@ -174,7 +193,6 @@ flowchart TD
     subgraph Strategy["Strategy subsystem"]
         StrategyService["StrategyService"]
         StrategyExtractor["StrategyExtractor"]
-        StrategyRepository["NegotiationStrategyRepository"]
         StrategyPrompt["StrategyPromptBuilder"]
 
         StrategyService -->|"loads persisted debrief"| DebriefRepository
@@ -186,7 +204,6 @@ flowchart TD
     subgraph Memory["Memory subsystem"]
         MemoryService["MemoryService"]
         MemoryExtractor["MemoryExtractor"]
-        MemoryRepository["NegotiatorMemoryRepository"]
         MemoryPrompt["MemoryPromptBuilder"]
 
         StrategyRepository --> MemoryService
@@ -240,13 +257,16 @@ flowchart TD
     MemoryExtractor --> Provider
     Fake -.->|"implements"| Provider
     Bedrock -.->|"implements"| Provider
+
 ```
 
-Repositories are instantiated once for the application and shared by the services
-that need them. This lets an opponent response observe scenarios, sessions, and
-turns created through the API, while CoachService retains append-only observations
-for completed exchanges. DebriefService reads only those stored observations and
-persists at most one synthesized debrief per session.
+SQL repositories are instantiated once for the application and shared by the
+services that need them. Each operation opens a short SQLAlchemy session and
+persists detached domain records to PostgreSQL. This lets an opponent response
+observe scenarios, sessions, and turns created through the API, while CoachService
+retains append-only observations for completed exchanges. DebriefService reads
+only those stored observations and persists at most one synthesized debrief per
+session.
 StrategyService reads only a persisted NegotiationDebriefRecord and stores at most
 one strategy per session.
 MemoryService lists persisted strategies, resolves the corresponding debriefs by
@@ -316,6 +336,53 @@ NegotiationEngine maps into its existing completion result.
    Debrief and Strategy are required, the associated Memory is retrieved when
    present, and `mark_completed` is not called. The original timestamp and
    artifacts are returned without LLM calls.
+
+### Planned completion transaction boundary
+
+The current workflow preserves recovery and idempotency by committing each
+repository write independently in this order:
+
+```text
+Debrief
+→ Strategy
+→ optional completion-triggered Memory
+→ completed session status
+```
+
+If a later step fails, an incomplete negotiation can retain earlier completion
+artifacts, and a retry reuses them. A completion-scoped Unit of Work is planned to
+make final persistence atomic without holding a database transaction open during
+LLM calls. It is not implemented yet.
+
+```mermaid
+flowchart LR
+    subgraph Outside["Outside database transaction"]
+        Validate["Validate session and turns"]
+        Read["Load observations and artifact history"]
+        Generate["Build prompts and call LLM providers"]
+        Prepare["Validate and prepare domain records"]
+
+        Validate --> Read --> Generate --> Prepare
+    end
+
+    subgraph Transaction["Planned short completion transaction"]
+        Reconcile["Lock session and reconcile existing artifacts"]
+        PersistDebrief["Persist missing Debrief"]
+        PersistStrategy["Persist missing Strategy"]
+        PersistMemory["Persist optional Memory and source lineage"]
+        PersistStatus["Mark negotiation completed"]
+        Commit["Commit once"]
+
+        Reconcile --> PersistDebrief --> PersistStrategy
+        PersistStrategy --> PersistMemory --> PersistStatus --> Commit
+    end
+
+    Prepare --> Reconcile
+```
+
+Turns and Coach observations remain outside this boundary because they are
+persisted before explicit completion. Completed-session requests remain read-only
+and return the original persisted artifacts and timestamp.
 
 Illustrative conversation:
 
@@ -430,6 +497,10 @@ endpoint.
 - Python 3.12+
 - FastAPI and Uvicorn
 - Pydantic v2 and pydantic-settings
+- PostgreSQL 17
+- SQLAlchemy 2.x and psycopg
+- Alembic database migrations
+- Docker Compose for local PostgreSQL
 - boto3 and AWS Bedrock Runtime
 - Python standard-library logging
 - pytest, FastAPI TestClient, and HTTPX
@@ -456,6 +527,11 @@ negotia/
 |   |   |-- exception_handlers.py
 |   |   |-- exceptions.py
 |   |   `-- logging_config.py
+|   |-- database/
+|   |   |-- models/
+|   |   |-- repositories/
+|   |   |-- base.py
+|   |   `-- session.py
 |   |-- domains/
 |   |   |-- adaptive_context/
 |   |   |-- coach/
@@ -488,11 +564,16 @@ negotia/
 |   |   |-- negotiation_state.py
 |   |   |-- opponent.py
 |   |   `-- strategy.py
+|   |-- workflows/
+|   |   `-- completion/
 |   `-- main.py
+|-- alembic/
 |-- tests/
 |-- .env.example
 |-- .gitignore
 |-- .python-version
+|-- alembic.ini
+|-- compose.yaml
 |-- pyproject.toml
 |-- README.md
 `-- uv.lock
@@ -509,9 +590,13 @@ repository root:
 uv python install 3.12
 uv sync --dev
 Copy-Item .env.example .env
+docker compose up -d database
+uv run alembic upgrade head
 ```
 
-The `.env` copy is optional when the defaults are suitable.
+The example environment configures the local PostgreSQL container. Application
+startup does not run migrations automatically; apply Alembic migrations before
+running the API or database-backed tests.
 
 ## LLM provider configuration
 
@@ -544,6 +629,7 @@ Other supported settings are:
 | `APP_NAME` | `Negotia API` |
 | `API_VERSION` | `0.1.0` |
 | `DEBUG` | `false` |
+| `DATABASE_URL` | `postgresql+psycopg://localhost:5432/negotia` |
 
 ## Running the API
 
@@ -598,6 +684,8 @@ uv run pytest
 
 The test suite uses the fake provider for API and service workflows and mocks AWS
 client creation in Bedrock-specific tests. It does not require live AWS access.
+Database repository and lifecycle integration tests use the configured PostgreSQL
+database and isolate test state with database transactions and savepoints.
 
 ## Running code-quality checks
 
@@ -608,27 +696,27 @@ uv run ruff format --check .
 
 ## Current limitations
 
-- Repositories are in memory, so all data is lost when the application restarts.
 - Negotiation state is re-extracted for each opponent response and is not persisted
   or incrementally updated.
-- Coach observations are persisted only in memory and are not returned by the API
+- Coach observations are persisted in PostgreSQL but are not returned by the API
   or available through a retrieval endpoint.
-- Debriefs are persisted only in memory and are exposed only as part of the
-  explicit completion response; no standalone retrieval endpoint exists.
-- In-memory repositories do not provide a transaction spanning debrief and
-  strategy persistence and the session-status update. A retry reuses artifacts
-  persisted before a later completion step failed.
+- Debriefs are persisted in PostgreSQL and exposed only as part of the explicit
+  completion response; no standalone retrieval endpoint exists.
+- Completion currently uses independent repository transactions for Debrief,
+  Strategy, optional Memory, and session-status writes. A retry reuses artifacts
+  committed before a later completion step failed. The planned completion Unit of
+  Work is not yet implemented.
 - The completion graph is synchronous, linear, and stateless. It does not use
   checkpointing, conditional branches, retries, streaming, or human-in-the-loop
   controls.
-- Strategies are persisted only in memory and have no standalone retrieval API.
-- Negotiator Memory is versioned only in memory, is scoped to the single-user MVP,
+- Strategies are persisted in PostgreSQL and have no standalone retrieval API.
+- Negotiator Memory is versioned in PostgreSQL, is scoped to the single-user MVP,
   and has no standalone API.
 - Authentication and authorization are not implemented.
 - Adaptive difficulty is not implemented.
 - Opponent quality depends on the selected provider, model, scenario data, and
   prompt design.
-- The current backend does not include a web frontend or durable database.
+- The current backend does not include a web frontend.
 - Production deployment infrastructure is not yet included.
 
 ## Roadmap
@@ -645,11 +733,11 @@ Completed:
 - [x] Deterministic opponent behavior profiles by scenario difficulty
 - [x] LLM-assisted structured negotiation-state extraction
 - [x] Coach observation extraction, service, and per-exchange persistence
-- [x] Structured debrief extraction and in-memory per-session persistence
+- [x] Structured debrief extraction and PostgreSQL per-session persistence
 - [x] Deterministic NegotiationEngine orchestration layer
 - [x] Opponent service and opponent-response API
 - [x] Explicit, idempotent negotiation completion with debrief and strategy response
-- [x] Standalone structured Strategy extraction and in-memory persistence
+- [x] Standalone structured Strategy extraction and PostgreSQL persistence
 - [x] Strategy integration with negotiation completion
 - [x] Isolated cross-session negotiator Memory extraction and version persistence
 - [x] Trigger-linked Memory integration with explicit negotiation completion
@@ -657,6 +745,8 @@ Completed:
 - [x] Coach Adaptive Integration using optional historical context
 - [x] Opponent Adaptive Integration using optional historical risk testing
 - [x] Linear LangGraph orchestration for the negotiation completion lifecycle
+- [x] SQLAlchemy repositories for every persisted negotiation aggregate
+- [x] PostgreSQL schema, Alembic migration, and lifecycle persistence verification
 
 Planned:
 
@@ -664,7 +754,7 @@ Planned:
 - [ ] Standalone Coach, debrief, strategy, and memory APIs
 - [ ] Adaptive difficulty
 - [ ] Durable authenticated negotiator profiles
-- [ ] Persistent database
+- [ ] Completion-scoped Unit of Work with LLM generation outside the transaction
 - [ ] Authentication and authorization
 - [ ] Web frontend and production deployment
 
