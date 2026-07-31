@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -41,3 +43,22 @@ def test_invalid_llm_provider_fails_validation(
 
     with pytest.raises(ValidationError):
         Settings()
+
+
+def test_unrelated_dotenv_variables_are_ignored(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "POSTGRES_DB=negotia\n"
+        "POSTGRES_USER=negotia\n"
+        "POSTGRES_PASSWORD=local-development-password\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    settings = Settings()
+
+    assert settings.app_name == "Negotia API"
+    assert not hasattr(settings, "postgres_password")
