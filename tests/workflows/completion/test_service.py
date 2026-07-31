@@ -9,6 +9,7 @@ from app.domains.debrief.models import (
     NegotiationDebrief,
     NegotiationDebriefRecord,
 )
+from app.domains.negotiation.exceptions import CompletionArtifactsChangedError
 from app.domains.negotiation.models import NegotiationSession, NegotiationStatus
 from app.domains.negotiation.service import NegotiationService
 from app.domains.negotiation_turn.service import NegotiationTurnService
@@ -136,3 +137,64 @@ def test_service_rejects_incomplete_final_state() -> None:
 
     with pytest.raises(RuntimeError, match="incomplete state"):
         service.run(session_id)
+
+
+def test_service_retries_artifact_change_once_and_returns_second_result() -> None:
+    session_id = uuid4()
+    final_state, expected_result = _create_final_state(session_id)
+    graph = MagicMock()
+    graph.invoke.side_effect = [
+        CompletionArtifactsChangedError(session_id),
+        final_state,
+    ]
+
+    with patch(
+        "app.workflows.completion.service.build_completion_graph",
+        return_value=graph,
+    ):
+        service = _build_service()
+
+    result = service.run(session_id)
+
+    assert result == expected_result
+    assert graph.invoke.call_count == 2
+    graph.invoke.assert_called_with(CompletionWorkflowState(session_id=session_id))
+
+
+def test_service_propagates_second_artifact_change_failure() -> None:
+    session_id = uuid4()
+    first_error = CompletionArtifactsChangedError(session_id)
+    second_error = CompletionArtifactsChangedError(session_id)
+    graph = MagicMock()
+    graph.invoke.side_effect = [first_error, second_error]
+
+    with patch(
+        "app.workflows.completion.service.build_completion_graph",
+        return_value=graph,
+    ):
+        service = _build_service()
+
+    with pytest.raises(CompletionArtifactsChangedError) as exc_info:
+        service.run(session_id)
+
+    assert exc_info.value is second_error
+    assert graph.invoke.call_count == 2
+
+
+def test_service_does_not_retry_unrelated_failure() -> None:
+    session_id = uuid4()
+    expected_error = RuntimeError("Unrelated workflow failure")
+    graph = MagicMock()
+    graph.invoke.side_effect = expected_error
+
+    with patch(
+        "app.workflows.completion.service.build_completion_graph",
+        return_value=graph,
+    ):
+        service = _build_service()
+
+    with pytest.raises(RuntimeError) as exc_info:
+        service.run(session_id)
+
+    assert exc_info.value is expected_error
+    graph.invoke.assert_called_once_with(CompletionWorkflowState(session_id=session_id))

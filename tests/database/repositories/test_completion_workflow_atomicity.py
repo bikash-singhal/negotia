@@ -1,4 +1,6 @@
 from datetime import UTC, datetime
+from types import TracebackType
+from typing import Self
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -40,6 +42,32 @@ from .conftest import SessionFactory
 
 class InjectedPersistenceError(Exception):
     pass
+
+
+class TrackingCompletionUnitOfWork(SQLCompletionUnitOfWork):
+    def __init__(
+        self,
+        session_factory: SessionFactory,
+        transaction_active: list[bool],
+    ) -> None:
+        super().__init__(session_factory)
+        self._transaction_active = transaction_active
+
+    def __enter__(self) -> Self:
+        super().__enter__()
+        self._transaction_active[0] = True
+        return self
+
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        try:
+            super().__exit__(exception_type, exception, traceback)
+        finally:
+            self._transaction_active[0] = False
 
 
 def _scenario() -> Scenario:
@@ -465,5 +493,88 @@ def test_interleaved_preparation_reconciles_after_first_finalizer_completes(
     assert strategy_repository.get_by_session(target.id) == first_strategy
     assert memory_repository.get_by_trigger_session(target.id) == first_memory
     assert debrief_extractor.extract.call_count == 2
+    assert strategy_extractor.extract.call_count == 2
+    assert memory_extractor.extract.call_count == 2
+
+
+def test_artifact_change_retry_reprepares_outside_transaction_and_persists_once(
+    database_session_factory: SessionFactory,
+) -> None:
+    (
+        workflow,
+        negotiation_service,
+        negotiation_repository,
+        turn_repository,
+        coach_repository,
+        debrief_repository,
+        strategy_repository,
+        memory_repository,
+        debrief_extractor,
+        strategy_extractor,
+        memory_extractor,
+    ) = _build_workflow(database_session_factory)
+    transaction_active = [False]
+    workflow._nodes._unit_of_work_factory = lambda: TrackingCompletionUnitOfWork(
+        database_session_factory,
+        transaction_active,
+    )
+    scenario = SQLScenarioRepository(database_session_factory).create(_scenario())
+    _seed_completed_history(
+        scenario.scenario_id,
+        negotiation_repository,
+        debrief_repository,
+        strategy_repository,
+    )
+    target = _create_session_with_exchange(
+        scenario.scenario_id,
+        negotiation_service,
+        turn_repository,
+        coach_repository,
+    )
+    concurrent_debrief = NegotiationDebriefRecord(
+        id=uuid4(),
+        session_id=target.id,
+        debrief=_debrief(),
+        observation_count=1,
+        created_at=datetime.now(UTC),
+    )
+    strategy_attempts = 0
+
+    def extract_debrief(_observations: object) -> NegotiationDebrief:
+        assert not transaction_active[0]
+        return _debrief()
+
+    def extract_strategy(_debrief_record: object) -> NegotiationStrategy:
+        nonlocal strategy_attempts
+        assert not transaction_active[0]
+        strategy_attempts += 1
+        if strategy_attempts == 1:
+            debrief_repository.create(concurrent_debrief)
+        return _strategy()
+
+    def extract_memory(
+        _debrief_records: object,
+        _strategy_records: object,
+    ) -> NegotiatorMemory:
+        assert not transaction_active[0]
+        return _memory()
+
+    debrief_extractor.extract.side_effect = extract_debrief
+    strategy_extractor.extract.side_effect = extract_strategy
+    memory_extractor.extract.side_effect = extract_memory
+
+    result = workflow.run(target.id)
+    completed_at = result.session.updated_at
+    repeated = workflow.run(target.id)
+
+    assert result == repeated
+    assert repeated.session.updated_at == completed_at
+    assert result.debrief_record == concurrent_debrief
+    assert debrief_repository.get_by_session(target.id) == concurrent_debrief
+    assert strategy_repository.get_by_session(target.id) == result.strategy_record
+    assert memory_repository.get_by_trigger_session(target.id) == result.memory_record
+    assert len(strategy_repository.list_all()) == 2
+    assert len(memory_repository.list_all()) == 1
+    assert debrief_extractor.extract.call_count == 1
     assert strategy_extractor.extract.call_count == 2
     assert memory_extractor.extract.call_count == 2

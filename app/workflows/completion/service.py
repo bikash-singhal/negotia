@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from app.database.unit_of_work import CompletionUnitOfWorkFactory
+from app.domains.negotiation.exceptions import CompletionArtifactsChangedError
 from app.domains.negotiation.service import NegotiationService
 from app.domains.negotiation_turn.service import NegotiationTurnService
 from app.services.debrief import DebriefService
@@ -35,7 +36,14 @@ class CompletionWorkflowService:
         self._graph: CompletionGraph = build_completion_graph(self._nodes)
 
     def run(self, session_id: UUID) -> CompletionWorkflowResult:
-        final_state = self._graph.invoke(CompletionWorkflowState(session_id=session_id))
+        try:
+            final_state = self._graph.invoke(
+                CompletionWorkflowState(session_id=session_id)
+            )
+        except CompletionArtifactsChangedError:
+            final_state = self._graph.invoke(
+                CompletionWorkflowState(session_id=session_id)
+            )
         required_fields = {
             "session",
             "debrief_record",
