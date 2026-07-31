@@ -500,7 +500,7 @@ endpoint.
 - PostgreSQL 17
 - SQLAlchemy 2.x and psycopg
 - Alembic database migrations
-- Docker Compose for production-like local API and PostgreSQL execution
+- Docker Compose for production-like local and single-instance EC2 execution
 - boto3 and AWS Bedrock Runtime
 - Python standard-library logging
 - pytest, FastAPI TestClient, and HTTPX
@@ -570,13 +570,18 @@ negotia/
 |-- alembic/
 |-- docker/
 |   `-- entrypoint.sh
+|-- scripts/
+|   |-- backup-postgres.sh
+|   `-- deploy-ec2.sh
 |-- tests/
 |-- .dockerignore
 |-- .env.example
+|-- .env.production.example
 |-- .gitignore
 |-- .python-version
 |-- alembic.ini
 |-- compose.yaml
+|-- compose.production.yaml
 |-- Dockerfile
 |-- pyproject.toml
 |-- README.md
@@ -689,6 +694,77 @@ docker compose down
 PostgreSQL data is stored in the `negotia_postgres_data` named volume. Do not use
 `docker compose down --volumes` when the local data must be retained.
 
+## Single-instance EC2 deployment
+
+The repository includes a minimal production Compose override for one Ubuntu EC2
+instance running the API and PostgreSQL as separate containers. It does not
+configure HTTPS, a domain, a load balancer, or multi-instance orchestration.
+
+Install Docker Engine with the Docker Compose plugin on the instance, then clone
+the repository and create the production environment file:
+
+```bash
+git clone <repository-url> negotia
+cd negotia
+cp .env.production.example .env.production
+chmod 600 .env.production
+```
+
+Replace `POSTGRES_PASSWORD` with a strong random password and confirm the Bedrock
+model and AWS region. Do not add AWS access keys, secret keys, or `AWS_PROFILE`.
+Attach an EC2 IAM role that grants only the required Amazon Bedrock model-invocation
+permissions; boto3 will obtain temporary credentials from that role through the
+default AWS credential chain. Local `~/.aws` files are neither mounted nor copied
+into the API image.
+
+Configure the EC2 Security Group conservatively:
+
+- Allow SSH port 22 only from the administrator's trusted IP address.
+- Allow TCP port 8000 only from clients that need API access.
+- Do not open PostgreSQL port 5432. The production override removes its host-port
+  publication, so PostgreSQL remains reachable only through the Compose network.
+
+Deploy or safely update the current Git branch with:
+
+```bash
+bash scripts/deploy-ec2.sh
+```
+
+The script verifies Docker and Compose, requires `.env.production`, performs a
+fast-forward-only pull, builds the API image, starts the stack, waits for healthy
+services, and prints service status. On startup failure it prints recent API logs.
+It never removes the PostgreSQL volume.
+
+Use the production Compose files for operational commands:
+
+```bash
+docker compose --env-file .env.production -f compose.yaml -f compose.production.yaml ps
+docker compose --env-file .env.production -f compose.yaml -f compose.production.yaml logs -f api
+docker compose --env-file .env.production -f compose.yaml -f compose.production.yaml restart api
+```
+
+Every API container startup runs `uv run alembic upgrade head` before Uvicorn.
+Uvicorn starts only when migrations succeed. The API container also waits for the
+PostgreSQL health check before starting.
+
+Create a timestamped logical PostgreSQL backup without deleting older backups:
+
+```bash
+bash scripts/backup-postgres.sh
+```
+
+Backups are written to the ignored local `backups/` directory. Copy them to durable
+off-instance storage according to the deployment's recovery requirements.
+
+Stop containers without deleting database data:
+
+```bash
+docker compose --env-file .env.production -f compose.yaml -f compose.production.yaml down
+```
+
+Do not add `--volumes` to that command. PostgreSQL data remains in the
+`negotia_postgres_data` named volume.
+
 ## Available API endpoints
 
 | Method | Path | Description |
@@ -767,8 +843,9 @@ uv run ruff format --check .
 - Opponent quality depends on the selected provider, model, scenario data, and
   prompt design.
 - The current backend does not include a web frontend.
-- Cloud deployment infrastructure is not yet included; Docker Compose currently
-  provides production-like local execution only.
+- A single-instance EC2 Compose configuration and operating scripts are included,
+  but no AWS infrastructure has been provisioned and HTTPS, domain routing,
+  automated off-instance backups, and multi-instance deployment are not configured.
 
 ## Roadmap
 
@@ -799,6 +876,7 @@ Completed:
 - [x] SQLAlchemy repositories for every persisted negotiation aggregate
 - [x] PostgreSQL schema, Alembic migration, and lifecycle persistence verification
 - [x] Production-like local API and PostgreSQL containers with migration startup
+- [x] Single-instance EC2 Compose configuration and PostgreSQL backup helper
 
 Planned:
 
