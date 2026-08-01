@@ -74,6 +74,32 @@ def test_default_access_token_expiration_is_thirty_minutes(
     assert settings.access_token_expire_minutes == 30
 
 
+def test_cors_origins_default_to_local_vite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CORS_ORIGINS", raising=False)
+
+    settings = Settings()
+
+    assert settings.cors_origins == ["http://localhost:5173"]
+
+
+def test_cors_origins_can_be_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "CORS_ORIGINS",
+        '["https://app.example.com","http://localhost:5173"]',
+    )
+
+    settings = Settings()
+
+    assert settings.cors_origins == [
+        "https://app.example.com",
+        "http://localhost:5173",
+    ]
+
+
 def test_access_token_expiration_can_be_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

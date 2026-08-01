@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     app_name: str = "Negotia API"
     api_version: str = "0.1.0"
     debug: bool = False
+    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     database_url: str = "postgresql+psycopg://localhost:5432/negotia"
     aws_region: str = "us-east-1"
     aws_profile: str | None = None

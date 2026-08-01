@@ -698,6 +698,45 @@ uv run uvicorn app.main:app --reload
 
 The API is available at `http://127.0.0.1:8000`.
 
+## Frontend local development
+
+The initial React frontend supports registration, login, session restoration
+through `/auth/me`, and logout. It does not yet include Scenario or negotiation
+interfaces.
+
+Install Node.js and pnpm, start the API locally, then run these commands in
+Windows PowerShell:
+
+```powershell
+Set-Location frontend
+pnpm install
+Copy-Item .env.example .env
+pnpm dev
+```
+
+`frontend/.env` configures the API root without embedding a deployment address in
+source code:
+
+```dotenv
+VITE_API_BASE_URL=http://localhost:8000/api/v1
+```
+
+Open `http://localhost:5173`. The backend allows that Vite origin by default;
+additional trusted origins can be configured with the backend `CORS_ORIGINS`
+setting as a JSON array.
+
+Validate TypeScript and create a production bundle with:
+
+```powershell
+pnpm typecheck
+pnpm build
+```
+
+For this MVP, the access token is stored in browser `localStorage`, verified with
+`GET /auth/me` on startup, and removed when invalid, expired, or explicitly logged
+out. Passwords are held only in form state and are never persisted. Local storage
+is a pragmatic MVP choice, not the strongest production browser-token strategy.
+
 ## Running the complete stack with Docker Compose
 
 Create the local environment file once, then build and start the API and

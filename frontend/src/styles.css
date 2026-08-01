@@ -1,0 +1,233 @@
+:root {
+  color: #172033;
+  background: #f3f6fb;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+.app-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(76, 111, 255, 0.12), transparent 36%),
+    #f3f6fb;
+}
+
+.auth-card,
+.workspace-card {
+  width: min(100%, 430px);
+  padding: 32px;
+  border: 1px solid #dfe5ef;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 18px 50px rgba(31, 45, 72, 0.1);
+}
+
+.auth-header h1,
+.workspace-card h1 {
+  margin: 4px 0 8px;
+  color: #10182a;
+  font-size: clamp(2rem, 8vw, 2.6rem);
+  letter-spacing: -0.04em;
+}
+
+.auth-header > p:last-child,
+.welcome-message,
+.workspace-placeholder {
+  color: #5d687c;
+  line-height: 1.55;
+}
+
+.eyebrow {
+  margin: 0;
+  color: #3659d9;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+  margin: 28px 0 24px;
+  padding: 4px;
+  border-radius: 10px;
+  background: #eef2f8;
+}
+
+.auth-tab {
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 7px;
+  color: #667085;
+  background: transparent;
+  font-weight: 650;
+}
+
+.auth-tab.active {
+  color: #1f3caa;
+  background: #ffffff;
+  box-shadow: 0 2px 7px rgba(31, 45, 72, 0.1);
+}
+
+.auth-form {
+  display: grid;
+  gap: 18px;
+}
+
+.field {
+  display: grid;
+  gap: 7px;
+}
+
+.field label {
+  color: #273248;
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.field input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #cbd4e2;
+  border-radius: 9px;
+  color: #172033;
+  background: #ffffff;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.field input:focus {
+  border-color: #4c6fff;
+  box-shadow: 0 0 0 3px rgba(76, 111, 255, 0.14);
+}
+
+.field input:disabled {
+  background: #f5f7fa;
+}
+
+.field-hint {
+  color: #788397;
+  font-size: 0.8rem;
+}
+
+.primary-button,
+.secondary-button {
+  min-height: 44px;
+  padding: 10px 18px;
+  border-radius: 9px;
+  font-weight: 700;
+}
+
+.primary-button {
+  border: 1px solid #3659d9;
+  color: #ffffff;
+  background: #3659d9;
+}
+
+.primary-button:hover:not(:disabled) {
+  background: #2949bf;
+}
+
+.primary-button:disabled {
+  border-color: #9aa9dd;
+  background: #9aa9dd;
+}
+
+.secondary-button {
+  width: fit-content;
+  margin-top: 10px;
+  border: 1px solid #cbd4e2;
+  color: #273248;
+  background: #ffffff;
+}
+
+.secondary-button:hover {
+  background: #f5f7fa;
+}
+
+.form-message {
+  margin: 0 0 18px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.auth-form .form-message {
+  margin: 0;
+}
+
+.error-message {
+  color: #9f2430;
+  background: #fff0f1;
+}
+
+.success-message {
+  color: #176240;
+  background: #edf9f2;
+}
+
+.workspace-card {
+  display: grid;
+  gap: 16px;
+}
+
+.workspace-card p {
+  margin: 0;
+}
+
+.workspace-placeholder {
+  padding: 18px;
+  border-radius: 10px;
+  background: #f5f7fb;
+}
+
+.loading-state {
+  color: #43506a;
+  font-weight: 650;
+}
+
+@media (max-width: 520px) {
+  .app-shell {
+    align-items: start;
+    padding: 16px;
+  }
+
+  .auth-card,
+  .workspace-card {
+    margin-top: 28px;
+    padding: 24px;
+  }
+}
