@@ -27,6 +27,8 @@ services:
       APP_NAME: ${APP_NAME:-Negotia API}
       API_VERSION: ${API_VERSION:-0.1.0}
       DEBUG: ${DEBUG:-false}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-development-only-secret-change-me}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-negotia}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@database:5432/${POSTGRES_DB:-negotia}
       LLM_PROVIDER: ${LLM_PROVIDER:-fake}
       BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-amazon.nova-lite-v1:0}

@@ -8,6 +8,7 @@ from app.database.models.negotiation import NegotiationSessionModel
 from app.database.models.negotiation_turn import NegotiationTurnModel
 from app.database.models.scenario import ScenarioModel
 from app.database.models.strategy import NegotiationStrategyModel
+from app.database.models.user import UserModel
 
 __all__ = [
     "CoachObservationModel",
@@ -18,4 +19,5 @@ __all__ = [
     "NegotiatorMemoryModel",
     "NegotiatorMemorySourceModel",
     "ScenarioModel",
+    "UserModel",
 ]

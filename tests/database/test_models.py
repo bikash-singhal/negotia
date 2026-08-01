@@ -16,6 +16,7 @@ EXPECTED_TABLES = {
     "negotiator_memories",
     "negotiator_memory_sources",
     "scenarios",
+    "users",
 }
 
 
@@ -61,6 +62,7 @@ def test_primary_keys_match_domain_identifiers() -> None:
         "negotiation_strategies": ("id",),
         "negotiator_memories": ("id",),
         "negotiator_memory_sources": ("memory_id", "session_id"),
+        "users": ("id",),
     }
 
     for table_name, expected_columns in expected_primary_keys.items():
@@ -150,6 +152,7 @@ def test_unique_constraints_preserve_repository_invariants() -> None:
     assert _unique_column_sets("negotiator_memory_sources") == {
         ("memory_id", "source_order"),
     }
+    assert _unique_column_sets("users") == {("username",)}
 
 
 def test_generated_and_list_fields_use_jsonb() -> None:
@@ -201,6 +204,7 @@ def test_all_datetime_columns_are_timezone_aware() -> None:
         "negotiation_debriefs": ("created_at",),
         "negotiation_strategies": ("created_at",),
         "negotiator_memories": ("created_at",),
+        "users": ("created_at",),
     }
 
     for table_name, column_names in datetime_columns.items():

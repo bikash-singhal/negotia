@@ -8,7 +8,8 @@ from alembic import command
 from app.database.base import Base
 
 PROJECT_ROOT = Path(__file__).parents[2]
-REVISION_ID = "080962b433df"
+INITIAL_REVISION_ID = "080962b433df"
+USER_REVISION_ID = "e13a7d9c4b62"
 EXPECTED_TABLE_ORDER = (
     "scenarios",
     "negotiation_sessions",
@@ -18,6 +19,7 @@ EXPECTED_TABLE_ORDER = (
     "negotiation_strategies",
     "negotiator_memories",
     "negotiator_memory_sources",
+    "users",
 )
 
 
@@ -25,18 +27,23 @@ def _alembic_config() -> Config:
     return Config(str(PROJECT_ROOT / "alembic.ini"))
 
 
-def test_alembic_config_has_one_initial_revision_and_no_duplicate_url() -> None:
+def test_alembic_config_has_linear_revision_history_and_no_duplicate_url() -> None:
     config = _alembic_config()
     scripts = ScriptDirectory.from_config(config)
     head = scripts.get_current_head()
 
     assert config.get_main_option("sqlalchemy.url") is None
-    assert head == REVISION_ID
+    assert head == USER_REVISION_ID
 
-    revision = scripts.get_revision(head)
-    assert revision is not None
-    assert revision.down_revision is None
-    assert revision.doc == "create_initial_schema"
+    user_revision = scripts.get_revision(head)
+    assert user_revision is not None
+    assert user_revision.down_revision == INITIAL_REVISION_ID
+    assert user_revision.doc == "add_users"
+
+    initial_revision = scripts.get_revision(INITIAL_REVISION_ID)
+    assert initial_revision is not None
+    assert initial_revision.down_revision is None
+    assert initial_revision.doc == "create_initial_schema"
 
 
 def test_offline_upgrade_compiles_all_tables_in_dependency_order(
@@ -67,7 +74,7 @@ def test_offline_upgrade_compiles_all_tables_in_dependency_order(
 def test_offline_downgrade_drops_tables_in_reverse_dependency_order(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    command.downgrade(_alembic_config(), f"{REVISION_ID}:base", sql=True)
+    command.downgrade(_alembic_config(), f"{USER_REVISION_ID}:base", sql=True)
     captured = capsys.readouterr()
     sql = captured.out
 

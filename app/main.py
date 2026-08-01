@@ -16,11 +16,13 @@ from app.database.repositories.negotiation import SQLNegotiationRepository
 from app.database.repositories.negotiation_turn import SQLNegotiationTurnRepository
 from app.database.repositories.scenario import SQLScenarioRepository
 from app.database.repositories.strategy import SQLNegotiationStrategyRepository
+from app.database.repositories.user import SQLUserRepository
 from app.database.unit_of_work import SQLCompletionUnitOfWork
 from app.domains.negotiation.service import NegotiationService
 from app.domains.negotiation_turn.service import NegotiationTurnService
 from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.service import ScenarioService
+from app.domains.user.service import UserService
 from app.llm.factory import build_llm_provider
 from app.prompts.coach import CoachPromptBuilder
 from app.prompts.debrief import DebriefPromptBuilder
@@ -28,6 +30,8 @@ from app.prompts.memory import MemoryPromptBuilder
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
 from app.prompts.strategy import StrategyPromptBuilder
+from app.security.passwords import PasswordHasher
+from app.security.tokens import AccessTokenManager
 from app.services.adaptive_context import AdaptiveContextService
 from app.services.coach import CoachObservationExtractor, CoachService
 from app.services.debrief import DebriefExtractor, DebriefService
@@ -96,6 +100,17 @@ memory_extractor = MemoryExtractor(
     llm_provider,
 )
 memory_repository = SQLNegotiatorMemoryRepository()
+user_repository = SQLUserRepository()
+password_hasher = PasswordHasher()
+access_token_manager = AccessTokenManager(
+    settings.jwt_secret_key.get_secret_value(),
+    settings.access_token_expire_minutes,
+)
+user_service = UserService(
+    user_repository,
+    password_hasher,
+    access_token_manager,
+)
 memory_service = MemoryService(
     debrief_repository,
     strategy_repository,
@@ -135,6 +150,7 @@ app.state.debrief_service = debrief_service
 app.state.strategy_service = strategy_service
 app.state.memory_service = memory_service
 app.state.adaptive_context_service = adaptive_context_service
+app.state.user_service = user_service
 completion_workflow_service = CompletionWorkflowService(
     negotiation_service,
     negotiation_turn_service,

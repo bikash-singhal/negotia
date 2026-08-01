@@ -40,12 +40,14 @@ AdaptiveContextService provides a read-only runtime projection of the latest
 Memory. A compiled LangGraph workflow now coordinates the completion lifecycle
 through these existing services while NegotiationEngine preserves the API-facing
 result contract. Scenario, negotiation, turn, coach-observation, Debrief, Strategy,
-and Memory records are persisted in PostgreSQL through explicit SQLAlchemy
+Memory, and user records are persisted in PostgreSQL through explicit SQLAlchemy
 repositories. None of the AI artifacts has a standalone API.
 
 ## Current functionality
 
 - Versioned FastAPI API under `/api/v1`
+- Username/password registration and login with bcrypt password hashing
+- Expiring JWT access tokens and an authenticated current-user endpoint
 - Scenario creation, listing, and retrieval
 - Negotiation-session creation, listing, and retrieval
 - Negotiation-turn creation and retrieval
@@ -75,8 +77,8 @@ repositories. None of the AI artifacts has a standalone API.
 - AWS Bedrock Runtime provider using the Converse API
 - Configurable `fake` or `bedrock` provider selection
 - Public scenario responses that exclude hidden context and walk-away conditions
-- SQLAlchemy repositories for scenarios, sessions, turns, coach observations,
-  Debriefs, Strategies, and Memory
+- SQLAlchemy repositories for users, scenarios, sessions, turns, coach
+  observations, Debriefs, Strategies, and Memory
 - PostgreSQL foreign keys, uniqueness constraints, and ordered Memory source
   lineage
 - Alembic-managed schema and PostgreSQL lifecycle integration tests
@@ -118,6 +120,7 @@ flowchart TD
         DebriefRepository["SQLNegotiationDebriefRepository"]
         StrategyRepository["SQLNegotiationStrategyRepository"]
         MemoryRepository["SQLNegotiatorMemoryRepository"]
+        UserRepository["SQLUserRepository"]
         PostgreSQL[("PostgreSQL")]
 
         ScenarioRepository --> PostgreSQL
@@ -127,6 +130,14 @@ flowchart TD
         DebriefRepository --> PostgreSQL
         StrategyRepository --> PostgreSQL
         MemoryRepository --> PostgreSQL
+        UserRepository --> PostgreSQL
+    end
+
+    subgraph Authentication["Authentication subsystem"]
+        AuthAPI["Authentication API"]
+        UserService["UserService"]
+        AuthAPI --> UserService
+        UserService --> UserRepository
     end
 
     subgraph Scenario["Scenario subsystem"]
@@ -233,6 +244,7 @@ flowchart TD
     API --> TurnAPI
     API --> OpponentAPI
     API --> CompletionAPI
+    API --> AuthAPI
     OpponentAPI --> Engine
     CompletionAPI --> Engine
     Engine -->|"request / response result"| OpponentService
@@ -500,6 +512,7 @@ endpoint.
 - PostgreSQL 17
 - SQLAlchemy 2.x and psycopg
 - Alembic database migrations
+- pwdlib with bcrypt password hashing and PyJWT access tokens
 - Docker Compose for production-like local and single-instance EC2 execution
 - boto3 and AWS Bedrock Runtime
 - Python standard-library logging
@@ -515,6 +528,7 @@ negotia/
 |   |-- api/
 |   |   |-- dependencies.py
 |   |   `-- v1/
+|   |       |-- auth.py
 |   |       |-- health.py
 |   |       |-- negotiations.py
 |   |       |-- router.py
@@ -542,7 +556,11 @@ negotia/
 |   |   |-- negotiation_turn/
 |   |   |-- opponent/
 |   |   |-- scenario/
-|   |   `-- strategy/
+|   |   |-- strategy/
+|   |   `-- user/
+|   |-- security/
+|   |   |-- passwords.py
+|   |   `-- tokens.py
 |   |-- llm/
 |   |   |-- bedrock.py
 |   |   |-- factory.py
@@ -639,6 +657,8 @@ Other supported settings are:
 | `API_VERSION` | `0.1.0` |
 | `DEBUG` | `false` |
 | `DATABASE_URL` | `postgresql+psycopg://localhost:5432/negotia` |
+| `JWT_SECRET_KEY` | Local-development placeholder; replace outside local development |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` |
 
 ## Running the API
 
@@ -710,8 +730,9 @@ cp .env.production.example .env.production
 chmod 600 .env.production
 ```
 
-Replace `POSTGRES_PASSWORD` with a strong random password and confirm the Bedrock
-model and AWS region. Do not add AWS access keys, secret keys, or `AWS_PROFILE`.
+Replace `POSTGRES_PASSWORD` and `JWT_SECRET_KEY` with strong random values, then
+confirm the Bedrock model and AWS region. Do not add AWS access keys, secret keys,
+or `AWS_PROFILE`.
 Attach an EC2 IAM role that grants only the required Amazon Bedrock model-invocation
 permissions; boto3 will obtain temporary credentials from that role through the
 default AWS credential chain. Local `~/.aws` files are neither mounted nor copied
@@ -770,6 +791,9 @@ Do not add `--volumes` to that command. PostgreSQL data remains in the
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/api/v1/health` | Report API health. |
+| `POST` | `/api/v1/auth/register` | Register a user with a unique username. |
+| `POST` | `/api/v1/auth/login` | Authenticate and receive an expiring bearer token. |
+| `GET` | `/api/v1/auth/me` | Retrieve the authenticated user. |
 | `POST` | `/api/v1/scenarios` | Create a scenario. |
 | `GET` | `/api/v1/scenarios` | List scenarios. |
 | `GET` | `/api/v1/scenarios/{scenario_id}` | Retrieve a scenario. |
@@ -838,7 +862,8 @@ uv run ruff format --check .
 - Strategies are persisted in PostgreSQL and have no standalone retrieval API.
 - Negotiator Memory is versioned in PostgreSQL, is scoped to the single-user MVP,
   and has no standalone API.
-- Authentication and authorization are not implemented.
+- Negotiation resources are not yet associated with users, so ownership-based
+  authorization is not implemented.
 - Adaptive difficulty is not implemented.
 - Opponent quality depends on the selected provider, model, scenario data, and
   prompt design.
@@ -877,6 +902,7 @@ Completed:
 - [x] PostgreSQL schema, Alembic migration, and lifecycle persistence verification
 - [x] Production-like local API and PostgreSQL containers with migration startup
 - [x] Single-instance EC2 Compose configuration and PostgreSQL backup helper
+- [x] Username/password authentication with bcrypt and expiring JWT access tokens
 
 Planned:
 
@@ -885,7 +911,7 @@ Planned:
 - [ ] Adaptive difficulty
 - [ ] Durable authenticated negotiator profiles
 - [ ] Completion-scoped Unit of Work with LLM generation outside the transaction
-- [ ] Authentication and authorization
+- [ ] Negotiation-resource ownership and authorization
 - [ ] Web frontend and production deployment
 
 ## License status

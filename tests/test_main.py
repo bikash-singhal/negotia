@@ -5,7 +5,9 @@ from app.database.repositories.negotiation import SQLNegotiationRepository
 from app.database.repositories.negotiation_turn import SQLNegotiationTurnRepository
 from app.database.repositories.scenario import SQLScenarioRepository
 from app.database.repositories.strategy import SQLNegotiationStrategyRepository
+from app.database.repositories.user import SQLUserRepository
 from app.database.unit_of_work import SQLCompletionUnitOfWork
+from app.domains.user.service import UserService
 from app.llm.fake import FakeLLMProvider
 from app.main import (
     adaptive_context_service,
@@ -32,6 +34,8 @@ from app.main import (
     strategy_repository,
     strategy_service,
     turn_repository,
+    user_repository,
+    user_service,
 )
 from app.services.adaptive_context import AdaptiveContextService
 from app.services.coach import CoachObservationExtractor, CoachService
@@ -52,6 +56,7 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert isinstance(debrief_repository, SQLNegotiationDebriefRepository)
     assert isinstance(strategy_repository, SQLNegotiationStrategyRepository)
     assert isinstance(memory_repository, SQLNegotiatorMemoryRepository)
+    assert isinstance(user_repository, SQLUserRepository)
     assert negotiation_turn_service._turn_repository is turn_repository
     assert isinstance(adaptive_context_service, AdaptiveContextService)
     assert isinstance(llm_provider, FakeLLMProvider)
@@ -67,6 +72,7 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert isinstance(strategy_extractor, StrategyExtractor)
     assert isinstance(strategy_service, StrategyService)
     assert isinstance(opponent_service, OpponentService)
+    assert isinstance(user_service, UserService)
     assert coach_observation_extractor._llm_provider is llm_provider
     assert coach_service._extractor is coach_observation_extractor
     assert coach_service._repository is coach_observation_repository
@@ -127,6 +133,17 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert adaptive_context_service._memory_service is memory_service
     assert app.state.adaptive_context_service is adaptive_context_service
     assert not hasattr(negotiation_engine, "_adaptive_context_service")
+    assert user_service._repository is user_repository
+    assert app.state.user_service is user_service
+    assert not hasattr(app.state, "user_repository")
+
+
+def test_app_registers_authentication_endpoints() -> None:
+    route_paths = app.openapi().get("paths", {})
+
+    assert "/api/v1/auth/register" in route_paths
+    assert "/api/v1/auth/login" in route_paths
+    assert "/api/v1/auth/me" in route_paths
 
 
 def test_app_has_no_debrief_endpoint() -> None:

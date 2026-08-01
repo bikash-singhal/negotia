@@ -44,6 +44,7 @@ def test_deployment_script_uses_safe_compose_operations() -> None:
     assert "compose_command up -d --wait" in deployment_script
     assert "compose_command logs --tail=100 api" in deployment_script
     assert "Replace the placeholder POSTGRES_PASSWORD" in deployment_script
+    assert "Replace the placeholder JWT_SECRET_KEY" in deployment_script
     assert "docker compose down -v" not in normalized_script
     assert "docker compose down --volumes" not in normalized_script
     assert "docker system prune" not in normalized_script
@@ -66,6 +67,8 @@ def test_production_environment_uses_placeholders_without_credentials() -> None:
         "API_VERSION": "0.1.0",
         "DEBUG": "false",
         "API_PORT": "8000",
+        "JWT_SECRET_KEY": "CHANGE_ME_TO_A_STRONG_RANDOM_SECRET",
+        "ACCESS_TOKEN_EXPIRE_MINUTES": "30",
         "POSTGRES_DB": "negotia",
         "POSTGRES_USER": "negotia",
         "POSTGRES_PASSWORD": "CHANGE_ME_TO_A_STRONG_RANDOM_PASSWORD",

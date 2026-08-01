@@ -62,3 +62,44 @@ def test_unrelated_dotenv_variables_are_ignored(
 
     assert settings.app_name == "Negotia API"
     assert not hasattr(settings, "postgres_password")
+
+
+def test_default_access_token_expiration_is_thirty_minutes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ACCESS_TOKEN_EXPIRE_MINUTES", raising=False)
+
+    settings = Settings()
+
+    assert settings.access_token_expire_minutes == 30
+
+
+def test_access_token_expiration_can_be_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ACCESS_TOKEN_EXPIRE_MINUTES", "45")
+
+    settings = Settings()
+
+    assert settings.access_token_expire_minutes == 45
+
+
+def test_jwt_secret_is_stored_as_a_secret_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured_secret = "configured-test-secret-with-32-characters"
+    monkeypatch.setenv("JWT_SECRET_KEY", configured_secret)
+
+    settings = Settings()
+
+    assert settings.jwt_secret_key.get_secret_value() == configured_secret
+    assert configured_secret not in repr(settings)
+
+
+def test_jwt_secret_rejects_short_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JWT_SECRET_KEY", "too-short")
+
+    with pytest.raises(ValidationError):
+        Settings()

@@ -33,6 +33,11 @@ if grep -q 'CHANGE_ME_TO_URL_ENCODED_PASSWORD' "$ENV_FILE"; then
     exit 1
 fi
 
+if grep -q '^JWT_SECRET_KEY=CHANGE_ME_TO_A_STRONG_RANDOM_SECRET$' "$ENV_FILE"; then
+    echo "Replace the placeholder JWT_SECRET_KEY in $ENV_FILE before deployment." >&2
+    exit 1
+fi
+
 compose_command() {
     docker compose \
         --env-file "$ENV_FILE" \

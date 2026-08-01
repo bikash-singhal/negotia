@@ -5,6 +5,7 @@ from app.database.repositories.negotiation import SQLNegotiationRepository
 from app.database.repositories.negotiation_turn import SQLNegotiationTurnRepository
 from app.database.repositories.scenario import SQLScenarioRepository
 from app.database.repositories.strategy import SQLNegotiationStrategyRepository
+from app.database.repositories.user import SQLUserRepository
 
 __all__ = [
     "SQLCoachObservationRepository",
@@ -14,4 +15,5 @@ __all__ = [
     "SQLNegotiationTurnRepository",
     "SQLNegotiatorMemoryRepository",
     "SQLScenarioRepository",
+    "SQLUserRepository",
 ]

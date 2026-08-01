@@ -14,7 +14,7 @@ SessionFactory = Callable[[], Session]
 def database_session_factory() -> Iterator[SessionFactory]:
     connection: Connection = engine.connect()
     transaction = connection.begin()
-    connection.execute(text("TRUNCATE TABLE scenarios CASCADE"))
+    connection.execute(text("TRUNCATE TABLE users, scenarios CASCADE"))
 
     def create_session() -> Session:
         return Session(
