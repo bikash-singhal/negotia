@@ -7,6 +7,7 @@ from app.domains.scenario.schemas import (
     ScenarioInternalResponse,
     ScenarioResponse,
 )
+from tests.ownership import TEST_USER_ID
 
 
 def _valid_scenario_data() -> dict[str, object]:
@@ -27,6 +28,7 @@ def _valid_scenario_data() -> dict[str, object]:
 
 def _create_scenario() -> Scenario:
     return Scenario(
+        user_id=TEST_USER_ID,
         title="Supplier contract renewal",
         description="Renegotiate the annual supplier contract and delivery terms.",
         industry="Manufacturing",

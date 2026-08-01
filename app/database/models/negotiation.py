@@ -19,9 +19,24 @@ class NegotiationSessionModel(Base):
             "ix_negotiation_sessions_scenario_id",
             "scenario_id",
         ),
+        Index(
+            "ix_negotiation_sessions_user_id_created_at_id",
+            "user_id",
+            "created_at",
+            "id",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey(
+            "users.id",
+            name="fk_negotiation_sessions_user_id_users",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
     scenario_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey(

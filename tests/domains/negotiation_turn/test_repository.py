@@ -6,6 +6,7 @@ from app.domains.negotiation_turn.models import (
     NegotiationTurnSpeaker,
 )
 from app.domains.negotiation_turn.repository import NegotiationTurnRepository
+from tests.ownership import TEST_USER_ID
 
 
 def _create_turn(
@@ -27,39 +28,52 @@ def test_create_stores_and_get_returns_turn() -> None:
     repository = NegotiationTurnRepository()
     turn = _create_turn()
 
-    created = repository.create(turn)
+    created = repository.create(turn, TEST_USER_ID)
 
     assert created is turn
-    assert repository.get(turn.id) is turn
+    assert repository.get_for_user(turn.id, TEST_USER_ID) is turn
 
 
 def test_get_returns_none_for_missing_turn() -> None:
     repository = NegotiationTurnRepository()
 
-    assert repository.get(uuid4()) is None
+    assert repository.get_for_user(uuid4(), TEST_USER_ID) is None
 
 
 def test_list_by_session_returns_empty_list() -> None:
     repository = NegotiationTurnRepository()
 
-    assert repository.list_by_session(uuid4()) == []
+    assert repository.list_by_session_for_user(uuid4(), TEST_USER_ID) == []
 
 
 def test_list_by_session_returns_only_requested_session_turns() -> None:
     repository = NegotiationTurnRepository()
     session_id = uuid4()
-    first = repository.create(_create_turn(session_id=session_id))
-    second = repository.create(_create_turn(session_id=session_id, turn_number=2))
-    repository.create(_create_turn())
+    first = repository.create(_create_turn(session_id=session_id), TEST_USER_ID)
+    second = repository.create(
+        _create_turn(session_id=session_id, turn_number=2), TEST_USER_ID
+    )
+    repository.create(_create_turn(), TEST_USER_ID)
 
-    assert repository.list_by_session(session_id) == [first, second]
+    assert repository.list_by_session_for_user(session_id, TEST_USER_ID) == [
+        first,
+        second,
+    ]
 
 
 def test_list_by_session_orders_turns_by_turn_number() -> None:
     repository = NegotiationTurnRepository()
     session_id = uuid4()
-    third = repository.create(_create_turn(session_id=session_id, turn_number=3))
-    first = repository.create(_create_turn(session_id=session_id))
-    second = repository.create(_create_turn(session_id=session_id, turn_number=2))
+    third = repository.create(
+        _create_turn(session_id=session_id, turn_number=3), TEST_USER_ID
+    )
+    first = repository.create(_create_turn(session_id=session_id), TEST_USER_ID)
+    second = repository.create(
+        _create_turn(session_id=session_id, turn_number=2), TEST_USER_ID
+    )
 
-    assert repository.list_by_session(session_id) == [first, second, third]
+    assert repository.list_by_session_for_user(session_id, TEST_USER_ID) == [
+        first,
+        second,
+        third,
+    ]

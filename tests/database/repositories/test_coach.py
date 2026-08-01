@@ -17,6 +17,7 @@ from app.database.repositories.scenario import SQLScenarioRepository
 from app.domains.coach.exceptions import CoachObservationAlreadyExistsError
 from app.domains.coach.models import CoachObservation, CoachObservationRecord
 from app.domains.negotiation.models import NegotiationSession, NegotiationStatus
+from app.domains.negotiation_turn.exceptions import NegotiationSessionNotFoundError
 from app.domains.negotiation_turn.models import (
     NegotiationTurn,
     NegotiationTurnSpeaker,
@@ -24,12 +25,14 @@ from app.domains.negotiation_turn.models import (
 from app.domains.scenario.models import Scenario, ScenarioDifficulty
 from app.services.adaptive_context import AdaptiveContextService
 from app.services.coach import CoachObservationExtractor, CoachService
+from tests.ownership import TEST_USER_ID
 
 from .conftest import SessionFactory
 
 
 def _scenario() -> Scenario:
     return Scenario(
+        user_id=TEST_USER_ID,
         title="Distribution agreement",
         description="Negotiate pricing and territory for a distribution agreement.",
         industry="Consumer goods",
@@ -51,6 +54,7 @@ def _persist_exchange(
     negotiation = SQLNegotiationRepository(session_factory).create(
         NegotiationSession(
             id=uuid4(),
+            user_id=TEST_USER_ID,
             scenario_id=scenario.scenario_id,
             status=NegotiationStatus.CREATED,
             created_at=now,
@@ -71,7 +75,8 @@ def _persist_exchange(
                 content=f"Turn {turn_number} content",
                 turn_number=turn_number,
                 created_at=now + timedelta(seconds=turn_number),
-            )
+            ),
+            TEST_USER_ID,
         )
         for turn_number in range(1, turn_count + 1)
     ]
@@ -123,13 +128,13 @@ def test_create_and_list_persist_detached_domain_records(
     repository = SQLCoachObservationRepository(database_session_factory)
     record = _record(negotiation.id, turns[0].id, turns[1].id)
 
-    created = repository.create(record)
+    created = repository.create(record, TEST_USER_ID)
 
     assert created == record
     assert created is not record
     assert created.observation is not record.observation
-    assert repository.list_by_session(negotiation.id) == [record]
-    assert repository.list_by_session(uuid4()) == []
+    assert repository.list_by_session_for_user(negotiation.id, TEST_USER_ID) == [record]
+    assert repository.list_by_session_for_user(uuid4(), TEST_USER_ID) == []
 
 
 def test_list_by_session_preserves_chronological_creation_order(
@@ -147,7 +152,8 @@ def test_list_by_session_preserves_chronological_creation_order(
             turns[0].id,
             turns[1].id,
             created_at=now,
-        )
+        ),
+        TEST_USER_ID,
     )
     second = repository.create(
         _record(
@@ -155,10 +161,14 @@ def test_list_by_session_preserves_chronological_creation_order(
             turns[2].id,
             turns[3].id,
             created_at=now + timedelta(seconds=1),
-        )
+        ),
+        TEST_USER_ID,
     )
 
-    assert repository.list_by_session(negotiation.id) == [first, second]
+    assert repository.list_by_session_for_user(negotiation.id, TEST_USER_ID) == [
+        first,
+        second,
+    ]
 
 
 def test_duplicate_exchange_preserves_domain_exception_behavior(
@@ -166,14 +176,20 @@ def test_duplicate_exchange_preserves_domain_exception_behavior(
 ) -> None:
     negotiation, turns = _persist_exchange(database_session_factory)
     repository = SQLCoachObservationRepository(database_session_factory)
-    original = repository.create(_record(negotiation.id, turns[0].id, turns[1].id))
+    original = repository.create(
+        _record(negotiation.id, turns[0].id, turns[1].id), TEST_USER_ID
+    )
 
     with pytest.raises(CoachObservationAlreadyExistsError) as exc_info:
-        repository.create(_record(negotiation.id, turns[0].id, turns[1].id))
+        repository.create(
+            _record(negotiation.id, turns[0].id, turns[1].id), TEST_USER_ID
+        )
 
     assert exc_info.value.user_turn_id == turns[0].id
     assert exc_info.value.opponent_turn_id == turns[1].id
-    assert repository.list_by_session(negotiation.id) == [original]
+    assert repository.list_by_session_for_user(negotiation.id, TEST_USER_ID) == [
+        original
+    ]
 
 
 def test_duplicate_record_id_raises_integrity_error(
@@ -191,7 +207,8 @@ def test_duplicate_record_id_raises_integrity_error(
             turns[0].id,
             turns[1].id,
             record_id=record_id,
-        )
+        ),
+        TEST_USER_ID,
     )
 
     with pytest.raises(IntegrityError):
@@ -201,17 +218,18 @@ def test_duplicate_record_id_raises_integrity_error(
                 turns[2].id,
                 turns[3].id,
                 record_id=record_id,
-            )
+            ),
+            TEST_USER_ID,
         )
 
 
-def test_missing_foreign_keys_raise_integrity_error(
+def test_missing_negotiation_is_rejected_before_foreign_key_write(
     database_session_factory: SessionFactory,
 ) -> None:
     repository = SQLCoachObservationRepository(database_session_factory)
 
-    with pytest.raises(IntegrityError):
-        repository.create(_record(uuid4(), uuid4(), uuid4()))
+    with pytest.raises(NegotiationSessionNotFoundError):
+        repository.create(_record(uuid4(), uuid4(), uuid4()), TEST_USER_ID)
 
 
 def test_rollback_preserves_previously_persisted_records(
@@ -219,12 +237,16 @@ def test_rollback_preserves_previously_persisted_records(
 ) -> None:
     negotiation, turns = _persist_exchange(database_session_factory)
     repository = SQLCoachObservationRepository(database_session_factory)
-    original = repository.create(_record(negotiation.id, turns[0].id, turns[1].id))
+    original = repository.create(
+        _record(negotiation.id, turns[0].id, turns[1].id), TEST_USER_ID
+    )
 
-    with pytest.raises(IntegrityError):
-        repository.create(_record(uuid4(), uuid4(), uuid4()))
+    with pytest.raises(NegotiationSessionNotFoundError):
+        repository.create(_record(uuid4(), uuid4(), uuid4()), TEST_USER_ID)
 
-    assert repository.list_by_session(negotiation.id) == [original]
+    assert repository.list_by_session_for_user(negotiation.id, TEST_USER_ID) == [
+        original
+    ]
 
 
 def test_each_operation_uses_a_fresh_sqlalchemy_session(
@@ -239,8 +261,8 @@ def test_each_operation_uses_a_fresh_sqlalchemy_session(
         return database_session
 
     repository = SQLCoachObservationRepository(tracking_session_factory)
-    repository.create(_record(negotiation.id, turns[0].id, turns[1].id))
-    repository.list_by_session(negotiation.id)
+    repository.create(_record(negotiation.id, turns[0].id, turns[1].id), TEST_USER_ID)
+    repository.list_by_session_for_user(negotiation.id, TEST_USER_ID)
 
     assert len(opened_sessions) == 2
     assert len({id(database_session) for database_session in opened_sessions}) == 2
@@ -266,11 +288,12 @@ def test_coach_service_behavior_is_unchanged(
 
     result = service.analyze_exchange(
         negotiation.id,
+        TEST_USER_ID,
         turns,
         turns[0],
         turns[1],
     )
 
     assert result.observation == observation
-    assert repository.list_by_session(negotiation.id) == [result]
+    assert repository.list_by_session_for_user(negotiation.id, TEST_USER_ID) == [result]
     extractor.extract.assert_called_once_with(turns, None)

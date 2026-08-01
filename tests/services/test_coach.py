@@ -24,6 +24,7 @@ from app.llm.provider import LLMProvider
 from app.prompts.coach import CoachPromptBuilder
 from app.services.adaptive_context import AdaptiveContextService
 from app.services.coach import CoachObservationExtractor, CoachService
+from tests.ownership import TEST_USER_ID
 
 
 def _build_extractor(
@@ -213,7 +214,7 @@ def test_coach_service_extracts_and_persists_latest_exchange() -> None:
     extractor = MagicMock(spec=CoachObservationExtractor)
     extractor.extract.return_value = observation
     repository = MagicMock(spec=CoachObservationRepository)
-    repository.create.side_effect = lambda record: record
+    repository.create.side_effect = lambda record, user_id: record
     adaptive_context = AdaptiveContext(
         focus_areas=["Diagnostic questioning"],
         coaching_focus=["Concession planning"],
@@ -226,6 +227,7 @@ def test_coach_service_extracts_and_persists_latest_exchange() -> None:
 
     result = service.analyze_exchange(
         session_id,
+        TEST_USER_ID,
         turns,
         latest_user_turn,
         opponent_turn,
@@ -239,9 +241,9 @@ def test_coach_service_extracts_and_persists_latest_exchange() -> None:
     assert result.observation is observation
     assert result.created_at.tzinfo is not None
     assert result.created_at.utcoffset() == timedelta(0)
-    adaptive_context_service.get_context.assert_called_once_with()
+    adaptive_context_service.get_context.assert_called_once_with(TEST_USER_ID)
     extractor.extract.assert_called_once_with(turns, adaptive_context)
-    repository.create.assert_called_once_with(result)
+    repository.create.assert_called_once_with(result, TEST_USER_ID)
 
 
 def test_coach_service_preserves_standard_behavior_without_context() -> None:
@@ -269,21 +271,22 @@ def test_coach_service_preserves_standard_behavior_without_context() -> None:
     extractor = MagicMock(spec=CoachObservationExtractor)
     extractor.extract.return_value = observation
     repository = MagicMock(spec=CoachObservationRepository)
-    repository.create.side_effect = lambda record: record
+    repository.create.side_effect = lambda record, user_id: record
     adaptive_context_service = MagicMock(spec=AdaptiveContextService)
     adaptive_context_service.get_context.return_value = None
     service = CoachService(extractor, repository, adaptive_context_service)
 
     result = service.analyze_exchange(
         session_id,
+        TEST_USER_ID,
         turns,
         user_turn,
         opponent_turn,
     )
 
-    adaptive_context_service.get_context.assert_called_once_with()
+    adaptive_context_service.get_context.assert_called_once_with(TEST_USER_ID)
     extractor.extract.assert_called_once_with(turns, None)
-    repository.create.assert_called_once_with(result)
+    repository.create.assert_called_once_with(result, TEST_USER_ID)
 
 
 def test_coach_service_rejects_non_latest_user_turn() -> None:
@@ -315,6 +318,7 @@ def test_coach_service_rejects_non_latest_user_turn() -> None:
     with pytest.raises(InvalidCoachExchangeError):
         service.analyze_exchange(
             session_id,
+            TEST_USER_ID,
             turns,
             earlier_user_turn,
             opponent_turn,

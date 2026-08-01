@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.domains.memory.models import NegotiatorMemory, NegotiatorMemoryRecord
+from tests.ownership import TEST_USER_ID
 
 
 def _valid_memory_data() -> dict[str, object]:
@@ -52,6 +53,7 @@ def test_memory_record_is_immutable_and_stores_aware_timestamp() -> None:
     created_at = datetime.now(UTC)
     record = NegotiatorMemoryRecord(
         id=uuid4(),
+        user_id=TEST_USER_ID,
         trigger_session_id=uuid4(),
         memory=NegotiatorMemory.model_validate(_valid_memory_data()),
         source_session_ids=(uuid4(), uuid4()),

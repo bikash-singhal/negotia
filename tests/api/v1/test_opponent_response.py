@@ -36,6 +36,7 @@ from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
 from app.services.strategy import StrategyExtractor, StrategyService
 from app.workflows.completion.service import CompletionWorkflowService
+from tests.api.v1.authentication import TEST_USER, authenticated_request
 from tests.workflows.completion.unit_of_work import (
     build_in_memory_unit_of_work_factory,
 )
@@ -195,7 +196,7 @@ def client(
         completion_workflow_service,
     )
     try:
-        with TestClient(app) as test_client:
+        with authenticated_request(), TestClient(app) as test_client:
             yield test_client
     finally:
         (
@@ -356,7 +357,9 @@ def test_complete_http_workflow_generates_and_lists_opponent_turn(
     assert [
         (turn["turn_number"], turn["speaker"]) for turn in history_response.json()
     ] == [(1, "user"), (2, "opponent")]
-    records = coach_repository.list_by_session(_parse_uuid(session["id"]))
+    records = coach_repository.list_by_session_for_user(
+        _parse_uuid(session["id"]), TEST_USER.id
+    )
     assert len(records) == 1
     assert records[0].user_turn_id == _parse_uuid(user_turn["id"])
     assert records[0].opponent_turn_id == _parse_uuid(opponent_turn["id"])
@@ -398,6 +401,7 @@ def test_opponent_response_returns_not_found_for_missing_scenario(
     session = negotiation_repository.create(
         NegotiationSession(
             id=uuid4(),
+            user_id=TEST_USER.id,
             scenario_id=scenario_id,
             status=NegotiationStatus.CREATED,
             created_at=now,
@@ -485,7 +489,12 @@ def test_empty_provider_response_returns_bad_gateway_without_persisting(
     }
     history = client.get(f"/api/v1/negotiations/{session['id']}/turns").json()
     assert history == [user_turn]
-    assert coach_repository.list_by_session(_parse_uuid(session["id"])) == []
+    assert (
+        coach_repository.list_by_session_for_user(
+            _parse_uuid(session["id"]), TEST_USER.id
+        )
+        == []
+    )
 
 
 def test_provider_exception_propagates_without_persisting(
@@ -506,4 +515,9 @@ def test_provider_exception_propagates_without_persisting(
     assert exc_info.value is expected_error
     history = client.get(f"/api/v1/negotiations/{session['id']}/turns").json()
     assert history == [user_turn]
-    assert coach_repository.list_by_session(_parse_uuid(session["id"])) == []
+    assert (
+        coach_repository.list_by_session_for_user(
+            _parse_uuid(session["id"]), TEST_USER.id
+        )
+        == []
+    )

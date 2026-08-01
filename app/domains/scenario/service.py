@@ -10,7 +10,7 @@ class ScenarioService:
     def __init__(self, repository: ScenarioRepository) -> None:
         self._repository = repository
 
-    def create_scenario(self, request: ScenarioCreate) -> Scenario:
+    def create_scenario(self, request: ScenarioCreate, user_id: UUID) -> Scenario:
         now = datetime.now(UTC)
         scenario = Scenario(
             scenario_id=uuid4(),
@@ -23,6 +23,7 @@ class ScenarioService:
             constraints=list(request.constraints),
             personality=request.personality,
             negotiation_style=request.negotiation_style,
+            user_id=user_id,
             hidden_context=list(request.hidden_context),
             walk_away_conditions=list(request.walk_away_conditions),
             created_at=now,
@@ -31,8 +32,8 @@ class ScenarioService:
 
         return self._repository.create(scenario)
 
-    def get_scenario(self, scenario_id: UUID) -> Scenario | None:
-        return self._repository.get(scenario_id)
+    def get_scenario(self, scenario_id: UUID, user_id: UUID) -> Scenario | None:
+        return self._repository.get_for_user(scenario_id, user_id)
 
-    def list_scenarios(self) -> list[Scenario]:
-        return self._repository.list()
+    def list_scenarios(self, user_id: UUID) -> list[Scenario]:
+        return self._repository.list_for_user(user_id)

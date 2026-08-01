@@ -10,6 +10,7 @@ from app.domains.strategy.models import NegotiationStrategyRecord
 
 class CompletionWorkflowState(TypedDict):
     session_id: UUID
+    user_id: UUID
     session: NotRequired[NegotiationSession]
     debrief_record: NotRequired[NegotiationDebriefRecord]
     strategy_record: NotRequired[NegotiationStrategyRecord]

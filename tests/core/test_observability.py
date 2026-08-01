@@ -8,12 +8,13 @@ from fastapi import Request, Response
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_negotiation_service
+from app.api.dependencies import get_current_user, get_negotiation_service
 from app.core.observability import get_request_id, reset_request_id, set_request_id
 from app.core.request_context import REQUEST_ID_HEADER, request_context_middleware
 from app.database.unit_of_work import SQLCompletionUnitOfWork
 from app.llm.observability import generate_with_observability
 from app.main import app
+from tests.ownership import TEST_USER
 
 
 def _events(caplog: pytest.LogCaptureFixture) -> list[str]:
@@ -131,6 +132,7 @@ def test_unexpected_exception_keeps_safe_response_and_request_id(
         "internal failure must not reach the client"
     )
     app.dependency_overrides[get_negotiation_service] = lambda: failing_service
+    app.dependency_overrides[get_current_user] = lambda: TEST_USER
     caplog.set_level(logging.ERROR)
 
     try:
@@ -141,6 +143,7 @@ def test_unexpected_exception_keeps_safe_response_and_request_id(
             )
     finally:
         app.dependency_overrides.pop(get_negotiation_service, None)
+        app.dependency_overrides.pop(get_current_user, None)
 
     assert response.status_code == 500
     assert response.json() == {

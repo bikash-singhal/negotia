@@ -34,6 +34,7 @@ from app.services.memory import MemoryExtractor, MemoryService
 from app.services.strategy import StrategyExtractor, StrategyService
 from app.workflows.completion.service import CompletionWorkflowService
 from app.workflows.completion.state import CompletionWorkflowState
+from tests.ownership import TEST_USER_ID
 
 from .conftest import SessionFactory
 
@@ -44,6 +45,7 @@ class InjectedPersistenceError(Exception):
 
 def _scenario() -> Scenario:
     return Scenario(
+        user_id=TEST_USER_ID,
         title="Atomic completion",
         description="Negotiate a multi-year supplier agreement with support terms.",
         industry="Technology",
@@ -107,7 +109,7 @@ def _create_session_with_exchange(
     coach_repository: SQLCoachObservationRepository,
 ) -> NegotiationSession:
     session = negotiation_service.create_session(
-        NegotiationSessionCreate(scenario_id=scenario_id)
+        NegotiationSessionCreate(scenario_id=scenario_id), TEST_USER_ID
     )
     now = datetime.now(UTC)
     user_turn = turn_repository.create(
@@ -118,7 +120,8 @@ def _create_session_with_exchange(
             content="We need stronger support terms.",
             turn_number=1,
             created_at=now,
-        )
+        ),
+        TEST_USER_ID,
     )
     opponent_turn = turn_repository.create(
         NegotiationTurn(
@@ -128,7 +131,8 @@ def _create_session_with_exchange(
             content="We can discuss support with a longer commitment.",
             turn_number=2,
             created_at=now,
-        )
+        ),
+        TEST_USER_ID,
     )
     coach_repository.create(
         CoachObservationRecord(
@@ -144,7 +148,8 @@ def _create_session_with_exchange(
                 confidence="high",
             ),
             created_at=now,
-        )
+        ),
+        TEST_USER_ID,
     )
     return session
 
@@ -159,6 +164,7 @@ def _seed_completed_history(
     session = negotiation_repository.create(
         NegotiationSession(
             id=uuid4(),
+            user_id=TEST_USER_ID,
             scenario_id=scenario_id,
             status=NegotiationStatus.COMPLETED,
             created_at=now,
@@ -172,9 +178,12 @@ def _seed_completed_history(
             debrief=_debrief(),
             observation_count=1,
             created_at=now,
-        )
+        ),
+        TEST_USER_ID,
     )
-    strategy_repository.create(_strategy_record(session.id, debrief.id, now))
+    strategy_repository.create(
+        _strategy_record(session.id, debrief.id, now), TEST_USER_ID
+    )
     return debrief, session.id
 
 
@@ -257,7 +266,7 @@ def _build_workflow(
     [
         (SQLNegotiationStrategyRepository, "create"),
         (SQLNegotiatorMemoryRepository, "create"),
-        (SQLNegotiationRepository, "update"),
+        (SQLNegotiationRepository, "update_for_user"),
     ],
 )
 def test_completion_write_failure_rolls_back_all_new_artifacts(
@@ -301,18 +310,24 @@ def test_completion_write_failure_rolls_back_all_new_artifacts(
         ),
         pytest.raises(InjectedPersistenceError),
     ):
-        workflow.run(target.id)
+        workflow.run(target.id, TEST_USER_ID)
 
-    fresh_negotiation = SQLNegotiationRepository(database_session_factory).get(
-        target.id
+    fresh_negotiation = SQLNegotiationRepository(database_session_factory).get_for_user(
+        target.id, TEST_USER_ID
     )
     assert fresh_negotiation is not None
     assert fresh_negotiation.status is NegotiationStatus.CREATED
-    assert debrief_repository.get_by_session(target.id) is None
-    assert strategy_repository.get_by_session(target.id) is None
-    assert memory_repository.get_by_trigger_session(target.id) is None
-    assert debrief_repository.get_by_session(legacy_session_id) == legacy_debrief
-    assert strategy_repository.get_by_session(legacy_session_id) is not None
+    assert debrief_repository.get_by_session_for_user(target.id, TEST_USER_ID) is None
+    assert strategy_repository.get_by_session_for_user(target.id, TEST_USER_ID) is None
+    assert memory_repository.get_by_trigger_session(target.id, TEST_USER_ID) is None
+    assert (
+        debrief_repository.get_by_session_for_user(legacy_session_id, TEST_USER_ID)
+        == legacy_debrief
+    )
+    assert (
+        strategy_repository.get_by_session_for_user(legacy_session_id, TEST_USER_ID)
+        is not None
+    )
 
 
 def test_failed_recovery_preserves_legacy_target_debrief_and_retry_succeeds(
@@ -351,7 +366,8 @@ def test_failed_recovery_preserves_legacy_target_debrief_and_retry_succeeds(
             debrief=_debrief(),
             observation_count=1,
             created_at=datetime.now(UTC),
-        )
+        ),
+        TEST_USER_ID,
     )
 
     with (
@@ -363,21 +379,30 @@ def test_failed_recovery_preserves_legacy_target_debrief_and_retry_succeeds(
         ),
         pytest.raises(InjectedPersistenceError),
     ):
-        workflow.run(target.id)
+        workflow.run(target.id, TEST_USER_ID)
 
-    assert debrief_repository.get_by_session(target.id) == legacy_target_debrief
-    assert strategy_repository.get_by_session(target.id) is None
-    assert memory_repository.get_by_trigger_session(target.id) is None
+    assert (
+        debrief_repository.get_by_session_for_user(target.id, TEST_USER_ID)
+        == legacy_target_debrief
+    )
+    assert strategy_repository.get_by_session_for_user(target.id, TEST_USER_ID) is None
+    assert memory_repository.get_by_trigger_session(target.id, TEST_USER_ID) is None
     debrief_extractor.extract.assert_not_called()
 
-    result = workflow.run(target.id)
-    repeated = workflow.run(target.id)
+    result = workflow.run(target.id, TEST_USER_ID)
+    repeated = workflow.run(target.id, TEST_USER_ID)
 
     assert result.session.status is NegotiationStatus.COMPLETED
     assert result.debrief_record == legacy_target_debrief
     assert result == repeated
-    assert strategy_repository.get_by_session(target.id) == result.strategy_record
-    assert memory_repository.get_by_trigger_session(target.id) == result.memory_record
+    assert (
+        strategy_repository.get_by_session_for_user(target.id, TEST_USER_ID)
+        == result.strategy_record
+    )
+    assert (
+        memory_repository.get_by_trigger_session(target.id, TEST_USER_ID)
+        == result.memory_record
+    )
     assert strategy_extractor.extract.call_count == 2
     assert memory_extractor.extract.call_count == 2
     debrief_extractor.extract.assert_not_called()
@@ -414,7 +439,10 @@ def test_interleaved_preparation_reconciles_after_first_finalizer_completes(
     )
 
     def prepare() -> CompletionWorkflowState:
-        state = CompletionWorkflowState(session_id=target.id)
+        state = CompletionWorkflowState(
+            session_id=target.id,
+            user_id=TEST_USER_ID,
+        )
         validation = workflow._nodes.validate_session(state)
         assert "session" in validation
         state["session"] = validation["session"]
@@ -461,9 +489,18 @@ def test_interleaved_preparation_reconciles_after_first_finalizer_completes(
     assert second_result["debrief_record"] == first_debrief
     assert second_result["strategy_record"] == first_strategy
     assert second_result["memory_record"] == first_memory
-    assert debrief_repository.get_by_session(target.id) == first_debrief
-    assert strategy_repository.get_by_session(target.id) == first_strategy
-    assert memory_repository.get_by_trigger_session(target.id) == first_memory
+    assert (
+        debrief_repository.get_by_session_for_user(target.id, TEST_USER_ID)
+        == first_debrief
+    )
+    assert (
+        strategy_repository.get_by_session_for_user(target.id, TEST_USER_ID)
+        == first_strategy
+    )
+    assert (
+        memory_repository.get_by_trigger_session(target.id, TEST_USER_ID)
+        == first_memory
+    )
     assert debrief_extractor.extract.call_count == 2
     assert strategy_extractor.extract.call_count == 2
     assert memory_extractor.extract.call_count == 2

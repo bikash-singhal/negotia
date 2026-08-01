@@ -3,7 +3,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.dependencies import get_negotiation_engine, get_negotiation_service
+from app.api.dependencies import (
+    get_current_user,
+    get_negotiation_engine,
+    get_negotiation_service,
+)
 from app.domains.debrief.exceptions import NoCoachObservationsError
 from app.domains.negotiation.exceptions import (
     InvalidNegotiationStatusTransitionError,
@@ -27,6 +31,7 @@ from app.domains.negotiation_turn.exceptions import (
     OpponentResponseRequiresUserTurnError,
 )
 from app.domains.negotiation_turn.schemas import NegotiationTurnResponse
+from app.domains.user.models import User
 from app.services.negotiation_engine import NegotiationEngine
 
 router = APIRouter()
@@ -40,9 +45,10 @@ router = APIRouter()
 def complete_negotiation(
     session_id: UUID,
     engine: Annotated[NegotiationEngine, Depends(get_negotiation_engine)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> NegotiationCompletionResponse:
     try:
-        result = engine.complete_session(session_id)
+        result = engine.complete_session(session_id, current_user.id)
     except NegotiationSessionNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -90,9 +96,10 @@ def complete_negotiation(
 def generate_opponent_response(
     session_id: UUID,
     engine: Annotated[NegotiationEngine, Depends(get_negotiation_engine)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> NegotiationTurnResponse:
     try:
-        turn = engine.generate_response(session_id)
+        turn = engine.generate_response(session_id, current_user.id)
     except (NegotiationSessionNotFoundError, ScenarioNotFoundError) as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -122,10 +129,11 @@ def generate_opponent_response(
 )
 async def list_negotiations(
     service: Annotated[NegotiationService, Depends(get_negotiation_service)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[NegotiationSessionResponse]:
     return [
         NegotiationSessionResponse.model_validate(session)
-        for session in service.list_sessions()
+        for session in service.list_sessions(current_user.id)
     ]
 
 
@@ -137,8 +145,9 @@ async def list_negotiations(
 async def get_negotiation(
     session_id: UUID,
     service: Annotated[NegotiationService, Depends(get_negotiation_service)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> NegotiationSessionResponse:
-    session = service.get_session(session_id)
+    session = service.get_session(session_id, current_user.id)
     if session is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -156,9 +165,10 @@ async def get_negotiation(
 async def create_negotiation(
     request: NegotiationSessionCreate,
     service: Annotated[NegotiationService, Depends(get_negotiation_service)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> NegotiationSessionResponse:
     try:
-        session = service.create_session(request)
+        session = service.create_session(request, current_user.id)
     except ScenarioNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

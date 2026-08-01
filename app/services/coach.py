@@ -93,6 +93,7 @@ class CoachService:
     def analyze_exchange(
         self,
         session_id: UUID,
+        user_id: UUID,
         turns: list[NegotiationTurn],
         user_turn: NegotiationTurn,
         opponent_turn: NegotiationTurn,
@@ -103,7 +104,7 @@ class CoachService:
             user_turn,
             opponent_turn,
         )
-        adaptive_context = self._adaptive_context_service.get_context()
+        adaptive_context = self._adaptive_context_service.get_context(user_id)
         observation = self._extractor.extract(turns, adaptive_context)
         record = CoachObservationRecord(
             id=uuid4(),
@@ -114,7 +115,7 @@ class CoachService:
             created_at=datetime.now(UTC),
         )
 
-        return self._repository.create(record)
+        return self._repository.create(record, user_id)
 
     @staticmethod
     def _validate_exchange(

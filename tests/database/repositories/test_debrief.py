@@ -19,18 +19,21 @@ from app.domains.coach.models import CoachObservation, CoachObservationRecord
 from app.domains.debrief.exceptions import NegotiationDebriefAlreadyExistsError
 from app.domains.debrief.models import NegotiationDebrief, NegotiationDebriefRecord
 from app.domains.negotiation.models import NegotiationSession, NegotiationStatus
+from app.domains.negotiation_turn.exceptions import NegotiationSessionNotFoundError
 from app.domains.negotiation_turn.models import (
     NegotiationTurn,
     NegotiationTurnSpeaker,
 )
 from app.domains.scenario.models import Scenario, ScenarioDifficulty
 from app.services.debrief import DebriefExtractor, DebriefService
+from tests.ownership import TEST_USER_ID
 
 from .conftest import SessionFactory
 
 
 def _scenario() -> Scenario:
     return Scenario(
+        user_id=TEST_USER_ID,
         title="Consulting agreement",
         description="Negotiate scope, fees, and delivery terms for an engagement.",
         industry="Professional services",
@@ -56,6 +59,7 @@ def _persist_sessions(
             repository.create(
                 NegotiationSession(
                     id=uuid4(),
+                    user_id=TEST_USER_ID,
                     scenario_id=scenario.scenario_id,
                     status=NegotiationStatus.CREATED,
                     created_at=created_at,
@@ -113,16 +117,16 @@ def test_create_and_get_by_session_return_detached_domain_record(
     repository = SQLNegotiationDebriefRepository(database_session_factory)
     record = _record(session.id)
 
-    created = repository.create(record)
-    reloaded = SQLNegotiationDebriefRepository(database_session_factory).get_by_session(
-        session.id
-    )
+    created = repository.create(record, TEST_USER_ID)
+    reloaded = SQLNegotiationDebriefRepository(
+        database_session_factory
+    ).get_by_session_for_user(session.id, TEST_USER_ID)
 
     assert created == record
     assert created is not record
     assert created.debrief is not record.debrief
     assert reloaded == record
-    assert repository.get_by_session(uuid4()) is None
+    assert repository.get_by_session_for_user(uuid4(), TEST_USER_ID) is None
 
 
 def test_get_by_session_keeps_sessions_isolated(
@@ -130,11 +134,11 @@ def test_get_by_session_keeps_sessions_isolated(
 ) -> None:
     sessions = _persist_sessions(database_session_factory, count=2)
     repository = SQLNegotiationDebriefRepository(database_session_factory)
-    first = repository.create(_record(sessions[0].id))
-    second = repository.create(_record(sessions[1].id))
+    first = repository.create(_record(sessions[0].id), TEST_USER_ID)
+    second = repository.create(_record(sessions[1].id), TEST_USER_ID)
 
-    assert repository.get_by_session(sessions[0].id) == first
-    assert repository.get_by_session(sessions[1].id) == second
+    assert repository.get_by_session_for_user(sessions[0].id, TEST_USER_ID) == first
+    assert repository.get_by_session_for_user(sessions[1].id, TEST_USER_ID) == second
 
 
 def test_duplicate_session_preserves_domain_exception_behavior(
@@ -142,13 +146,13 @@ def test_duplicate_session_preserves_domain_exception_behavior(
 ) -> None:
     session = _persist_sessions(database_session_factory)[0]
     repository = SQLNegotiationDebriefRepository(database_session_factory)
-    original = repository.create(_record(session.id))
+    original = repository.create(_record(session.id), TEST_USER_ID)
 
     with pytest.raises(NegotiationDebriefAlreadyExistsError) as exc_info:
-        repository.create(_record(session.id))
+        repository.create(_record(session.id), TEST_USER_ID)
 
     assert exc_info.value.session_id == session.id
-    assert repository.get_by_session(session.id) == original
+    assert repository.get_by_session_for_user(session.id, TEST_USER_ID) == original
 
 
 def test_duplicate_primary_key_raises_integrity_error(
@@ -157,19 +161,19 @@ def test_duplicate_primary_key_raises_integrity_error(
     sessions = _persist_sessions(database_session_factory, count=2)
     repository = SQLNegotiationDebriefRepository(database_session_factory)
     record_id = uuid4()
-    repository.create(_record(sessions[0].id, record_id=record_id))
+    repository.create(_record(sessions[0].id, record_id=record_id), TEST_USER_ID)
 
     with pytest.raises(IntegrityError):
-        repository.create(_record(sessions[1].id, record_id=record_id))
+        repository.create(_record(sessions[1].id, record_id=record_id), TEST_USER_ID)
 
 
-def test_missing_negotiation_foreign_key_raises_integrity_error(
+def test_missing_negotiation_is_rejected_before_foreign_key_write(
     database_session_factory: SessionFactory,
 ) -> None:
     repository = SQLNegotiationDebriefRepository(database_session_factory)
 
-    with pytest.raises(IntegrityError):
-        repository.create(_record(uuid4()))
+    with pytest.raises(NegotiationSessionNotFoundError):
+        repository.create(_record(uuid4()), TEST_USER_ID)
 
 
 def test_rollback_preserves_previously_persisted_debrief(
@@ -177,12 +181,12 @@ def test_rollback_preserves_previously_persisted_debrief(
 ) -> None:
     session = _persist_sessions(database_session_factory)[0]
     repository = SQLNegotiationDebriefRepository(database_session_factory)
-    original = repository.create(_record(session.id))
+    original = repository.create(_record(session.id), TEST_USER_ID)
 
-    with pytest.raises(IntegrityError):
-        repository.create(_record(uuid4()))
+    with pytest.raises(NegotiationSessionNotFoundError):
+        repository.create(_record(uuid4()), TEST_USER_ID)
 
-    assert repository.get_by_session(session.id) == original
+    assert repository.get_by_session_for_user(session.id, TEST_USER_ID) == original
 
 
 def test_each_operation_uses_a_fresh_sqlalchemy_session(
@@ -197,8 +201,8 @@ def test_each_operation_uses_a_fresh_sqlalchemy_session(
         return database_session
 
     repository = SQLNegotiationDebriefRepository(tracking_session_factory)
-    repository.create(_record(session.id))
-    repository.get_by_session(session.id)
+    repository.create(_record(session.id), TEST_USER_ID)
+    repository.get_by_session_for_user(session.id, TEST_USER_ID)
 
     assert len(opened_sessions) == 2
     assert len({id(database_session) for database_session in opened_sessions}) == 2
@@ -218,7 +222,8 @@ def test_debrief_service_behavior_is_unchanged_and_persisted(
             content="We need a ten percent fee reduction.",
             turn_number=1,
             created_at=now,
-        )
+        ),
+        TEST_USER_ID,
     )
     opponent_turn = turn_repository.create(
         NegotiationTurn(
@@ -228,7 +233,8 @@ def test_debrief_service_behavior_is_unchanged_and_persisted(
             content="We can discuss scope changes instead.",
             turn_number=2,
             created_at=now + timedelta(seconds=1),
-        )
+        ),
+        TEST_USER_ID,
     )
     coach_repository = SQLCoachObservationRepository(database_session_factory)
     observation = coach_repository.create(
@@ -245,20 +251,21 @@ def test_debrief_service_behavior_is_unchanged_and_persisted(
                 confidence="high",
             ),
             created_at=now + timedelta(seconds=2),
-        )
+        ),
+        TEST_USER_ID,
     )
     extractor = MagicMock(spec=DebriefExtractor)
     extractor.extract.return_value = _debrief()
     repository = SQLNegotiationDebriefRepository(database_session_factory)
     service = DebriefService(coach_repository, extractor, repository)
 
-    result = service.generate_for_session(session.id)
-    reloaded = SQLNegotiationDebriefRepository(database_session_factory).get_by_session(
-        session.id
-    )
+    result = service.generate_for_session(session.id, TEST_USER_ID)
+    reloaded = SQLNegotiationDebriefRepository(
+        database_session_factory
+    ).get_by_session_for_user(session.id, TEST_USER_ID)
 
     assert result.debrief == _debrief()
     assert result.observation_count == 1
     assert reloaded == result
-    assert service.get_for_session(session.id) == result
+    assert service.get_for_session(session.id, TEST_USER_ID) == result
     extractor.extract.assert_called_once_with([observation])

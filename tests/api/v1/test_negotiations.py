@@ -10,6 +10,7 @@ from app.domains.negotiation.service import NegotiationService
 from app.domains.scenario.repository import ScenarioRepository
 from app.domains.scenario.service import ScenarioService
 from app.main import app
+from tests.api.v1.authentication import authenticated_request
 
 
 @pytest.fixture
@@ -20,7 +21,7 @@ def client() -> Iterator[TestClient]:
         NegotiationRepository(),
         scenario_repository,
     )
-    with TestClient(app) as test_client:
+    with authenticated_request(), TestClient(app) as test_client:
         yield test_client
 
 

@@ -96,14 +96,22 @@ class DebriefService:
     def generate_for_session(
         self,
         session_id: UUID,
+        user_id: UUID,
     ) -> NegotiationDebriefRecord:
-        return self._debrief_repository.create(self.prepare_for_session(session_id))
+        return self._debrief_repository.create(
+            self.prepare_for_session(session_id, user_id),
+            user_id,
+        )
 
     def prepare_for_session(
         self,
         session_id: UUID,
+        user_id: UUID,
     ) -> NegotiationDebriefRecord:
-        observations = self._coach_observation_repository.list_by_session(session_id)
+        observations = self._coach_observation_repository.list_by_session_for_user(
+            session_id,
+            user_id,
+        )
         if not observations:
             raise NoCoachObservationsError()
 
@@ -120,5 +128,6 @@ class DebriefService:
     def get_for_session(
         self,
         session_id: UUID,
+        user_id: UUID,
     ) -> NegotiationDebriefRecord | None:
-        return self._debrief_repository.get_by_session(session_id)
+        return self._debrief_repository.get_by_session_for_user(session_id, user_id)

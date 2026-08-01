@@ -5,6 +5,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database.models.debrief import NegotiationDebriefModel
+from app.database.models.negotiation import NegotiationSessionModel
 from app.database.repositories._session import (
     RepositorySessionManager,
     SessionFactory,
@@ -12,6 +13,7 @@ from app.database.repositories._session import (
 from app.domains.debrief.exceptions import NegotiationDebriefAlreadyExistsError
 from app.domains.debrief.models import NegotiationDebrief, NegotiationDebriefRecord
 from app.domains.debrief.repository import NegotiationDebriefRepository
+from app.domains.negotiation_turn.exceptions import NegotiationSessionNotFoundError
 
 
 def negotiation_debrief_to_model(
@@ -65,9 +67,18 @@ class SQLNegotiationDebriefRepository(NegotiationDebriefRepository):
     def create(
         self,
         record: NegotiationDebriefRecord,
+        user_id: UUID,
     ) -> NegotiationDebriefRecord:
         with self._session_manager.session_scope() as database_session:
             try:
+                session_exists = database_session.scalar(
+                    select(NegotiationSessionModel.id).where(
+                        NegotiationSessionModel.id == record.session_id,
+                        NegotiationSessionModel.user_id == user_id,
+                    )
+                )
+                if session_exists is None:
+                    raise NegotiationSessionNotFoundError(record.session_id)
                 duplicate_id = database_session.scalar(
                     select(NegotiationDebriefModel.id).where(
                         NegotiationDebriefModel.session_id == record.session_id
@@ -85,14 +96,21 @@ class SQLNegotiationDebriefRepository(NegotiationDebriefRepository):
 
             return negotiation_debrief_to_domain(model)
 
-    def get_by_session(
+    def get_by_session_for_user(
         self,
         session_id: UUID,
+        user_id: UUID,
     ) -> NegotiationDebriefRecord | None:
         with self._session_manager.session_scope() as database_session:
             model = database_session.scalar(
-                select(NegotiationDebriefModel).where(
-                    NegotiationDebriefModel.session_id == session_id
+                select(NegotiationDebriefModel)
+                .join(
+                    NegotiationSessionModel,
+                    NegotiationSessionModel.id == NegotiationDebriefModel.session_id,
+                )
+                .where(
+                    NegotiationDebriefModel.session_id == session_id,
+                    NegotiationSessionModel.user_id == user_id,
                 )
             )
             return None if model is None else negotiation_debrief_to_domain(model)

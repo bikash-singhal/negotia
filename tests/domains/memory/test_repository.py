@@ -6,6 +6,7 @@ import pytest
 from app.domains.memory.exceptions import NegotiatorMemoryAlreadyExistsError
 from app.domains.memory.models import NegotiatorMemory, NegotiatorMemoryRecord
 from app.domains.memory.repository import NegotiatorMemoryRepository
+from tests.ownership import TEST_USER_ID
 
 
 def _create_record(
@@ -14,6 +15,7 @@ def _create_record(
 ) -> NegotiatorMemoryRecord:
     return NegotiatorMemoryRecord(
         id=uuid4(),
+        user_id=TEST_USER_ID,
         trigger_session_id=trigger_session_id,
         memory=NegotiatorMemory(
             recurring_strengths=[],
@@ -33,8 +35,8 @@ def _create_record(
 def test_empty_repository_has_no_latest_record_or_versions() -> None:
     repository = NegotiatorMemoryRepository()
 
-    assert repository.get_latest() is None
-    assert repository.list_all() == []
+    assert repository.get_latest(TEST_USER_ID) is None
+    assert repository.list_for_user(TEST_USER_ID) == []
 
 
 def test_create_stores_returns_and_marks_record_as_latest() -> None:
@@ -44,8 +46,8 @@ def test_create_stores_returns_and_marks_record_as_latest() -> None:
     result = repository.create(record)
 
     assert result is record
-    assert repository.get_latest() is record
-    assert repository.list_all() == [record]
+    assert repository.get_latest(TEST_USER_ID) is record
+    assert repository.list_for_user(TEST_USER_ID) == [record]
 
 
 def test_new_version_preserves_older_immutable_record() -> None:
@@ -53,8 +55,8 @@ def test_new_version_preserves_older_immutable_record() -> None:
     first = repository.create(_create_record(2))
     second = repository.create(_create_record(3))
 
-    assert repository.list_all() == [first, second]
-    assert repository.get_latest() is second
+    assert repository.list_for_user(TEST_USER_ID) == [first, second]
+    assert repository.get_latest(TEST_USER_ID) is second
     assert first.memory.sessions_analyzed == 2
     assert second.memory.sessions_analyzed == 3
 
@@ -63,10 +65,10 @@ def test_list_all_returns_defensive_list_copy() -> None:
     repository = NegotiatorMemoryRepository()
     record = repository.create(_create_record())
 
-    versions = repository.list_all()
+    versions = repository.list_for_user(TEST_USER_ID)
     versions.clear()
 
-    assert repository.list_all() == [record]
+    assert repository.list_for_user(TEST_USER_ID) == [record]
 
 
 def test_get_by_trigger_session_returns_completion_record_only() -> None:
@@ -77,8 +79,16 @@ def test_get_by_trigger_session_returns_completion_record_only() -> None:
         _create_record(trigger_session_id=trigger_session_id)
     )
 
-    assert repository.get_by_trigger_session(trigger_session_id) is completion_record
-    assert repository.get_by_trigger_session(standalone.source_session_ids[0]) is None
+    assert (
+        repository.get_by_trigger_session(trigger_session_id, TEST_USER_ID)
+        is completion_record
+    )
+    assert (
+        repository.get_by_trigger_session(
+            standalone.source_session_ids[0], TEST_USER_ID
+        )
+        is None
+    )
 
 
 def test_duplicate_completion_trigger_is_rejected() -> None:
@@ -90,8 +100,10 @@ def test_duplicate_completion_trigger_is_rejected() -> None:
         repository.create(_create_record(trigger_session_id=trigger_session_id))
 
     assert exc_info.value.trigger_session_id == trigger_session_id
-    assert repository.get_by_trigger_session(trigger_session_id) is original
-    assert repository.list_all() == [original]
+    assert (
+        repository.get_by_trigger_session(trigger_session_id, TEST_USER_ID) is original
+    )
+    assert repository.list_for_user(TEST_USER_ID) == [original]
 
 
 def test_multiple_standalone_versions_are_allowed() -> None:
@@ -99,5 +111,5 @@ def test_multiple_standalone_versions_are_allowed() -> None:
     first = repository.create(_create_record())
     second = repository.create(_create_record())
 
-    assert repository.list_all() == [first, second]
-    assert repository.get_latest() is second
+    assert repository.list_for_user(TEST_USER_ID) == [first, second]
+    assert repository.get_latest(TEST_USER_ID) is second

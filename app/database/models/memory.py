@@ -34,9 +34,24 @@ class NegotiatorMemoryModel(Base):
             "created_at",
             "id",
         ),
+        Index(
+            "ix_negotiator_memories_user_id_created_at_id",
+            "user_id",
+            "created_at",
+            "id",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey(
+            "users.id",
+            name="fk_negotiator_memories_user_id_users",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
     trigger_session_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey(

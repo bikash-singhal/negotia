@@ -28,6 +28,7 @@ from app.llm.fake import FakeLLMProvider
 from app.llm.provider import LLMProvider
 from app.prompts.strategy import StrategyPromptBuilder
 from app.services.strategy import StrategyExtractor, StrategyService
+from tests.ownership import TEST_USER_ID
 
 
 def _create_debrief_record(
@@ -236,19 +237,19 @@ def test_service_generates_and_persists_strategy_from_debrief() -> None:
     session_id = uuid4()
     debrief_record = _create_debrief_record(session_id)
     debrief_repository = MagicMock(spec=NegotiationDebriefRepository)
-    debrief_repository.get_by_session.return_value = debrief_record
+    debrief_repository.get_by_session_for_user.return_value = debrief_record
     extractor = MagicMock(spec=StrategyExtractor)
     strategy = _valid_strategy()
     extractor.extract.return_value = strategy
     strategy_repository = MagicMock(spec=NegotiationStrategyRepository)
-    strategy_repository.create.side_effect = lambda record: record
+    strategy_repository.create.side_effect = lambda record, user_id: record
     service = StrategyService(
         debrief_repository,
         extractor,
         strategy_repository,
     )
 
-    result = service.generate_for_session(session_id)
+    result = service.generate_for_session(session_id, TEST_USER_ID)
 
     assert isinstance(result, NegotiationStrategyRecord)
     assert isinstance(result.id, UUID)
@@ -257,9 +258,11 @@ def test_service_generates_and_persists_strategy_from_debrief() -> None:
     assert result.strategy is strategy
     assert result.created_at.tzinfo is not None
     assert result.created_at.utcoffset() == timedelta(0)
-    debrief_repository.get_by_session.assert_called_once_with(session_id)
+    debrief_repository.get_by_session_for_user.assert_called_once_with(
+        session_id, TEST_USER_ID
+    )
     extractor.extract.assert_called_once_with(debrief_record)
-    strategy_repository.create.assert_called_once_with(result)
+    strategy_repository.create.assert_called_once_with(result, TEST_USER_ID)
 
 
 def test_service_prepares_strategy_from_supplied_debrief_without_persisting() -> None:
@@ -272,19 +275,19 @@ def test_service_prepares_strategy_from_supplied_debrief_without_persisting() ->
     strategy_repository = MagicMock(spec=NegotiationStrategyRepository)
     service = StrategyService(debrief_repository, extractor, strategy_repository)
 
-    result = service.prepare_for_session(session_id, debrief_record)
+    result = service.prepare_for_session(session_id, TEST_USER_ID, debrief_record)
 
     assert result.session_id == session_id
     assert result.debrief_id == debrief_record.id
     assert result.strategy is strategy
-    debrief_repository.get_by_session.assert_not_called()
+    debrief_repository.get_by_session_for_user.assert_not_called()
     strategy_repository.create.assert_not_called()
 
 
 def test_service_rejects_missing_debrief_before_extraction() -> None:
     session_id = uuid4()
     debrief_repository = MagicMock(spec=NegotiationDebriefRepository)
-    debrief_repository.get_by_session.return_value = None
+    debrief_repository.get_by_session_for_user.return_value = None
     extractor = MagicMock(spec=StrategyExtractor)
     strategy_repository = MagicMock(spec=NegotiationStrategyRepository)
     service = StrategyService(
@@ -294,7 +297,7 @@ def test_service_rejects_missing_debrief_before_extraction() -> None:
     )
 
     with pytest.raises(NegotiationDebriefNotFoundError) as exc_info:
-        service.generate_for_session(session_id)
+        service.generate_for_session(session_id, TEST_USER_ID)
 
     assert exc_info.value.session_id == session_id
     extractor.extract.assert_not_called()
@@ -304,7 +307,9 @@ def test_service_rejects_missing_debrief_before_extraction() -> None:
 def test_service_does_not_persist_when_extraction_fails() -> None:
     session_id = uuid4()
     debrief_repository = MagicMock(spec=NegotiationDebriefRepository)
-    debrief_repository.get_by_session.return_value = _create_debrief_record(session_id)
+    debrief_repository.get_by_session_for_user.return_value = _create_debrief_record(
+        session_id
+    )
     extractor = MagicMock(spec=StrategyExtractor)
     expected_error = InvalidStrategyDataError()
     extractor.extract.side_effect = expected_error
@@ -316,7 +321,7 @@ def test_service_does_not_persist_when_extraction_fails() -> None:
     )
 
     with pytest.raises(InvalidStrategyDataError) as exc_info:
-        service.generate_for_session(session_id)
+        service.generate_for_session(session_id, TEST_USER_ID)
 
     assert exc_info.value is expected_error
     strategy_repository.create.assert_not_called()
@@ -325,7 +330,7 @@ def test_service_does_not_persist_when_extraction_fails() -> None:
 def test_duplicate_generation_extracts_then_repository_rejects() -> None:
     session_id = uuid4()
     debrief_repository = NegotiationDebriefRepository()
-    debrief_repository.create(_create_debrief_record(session_id))
+    debrief_repository.create(_create_debrief_record(session_id), TEST_USER_ID)
     extractor = MagicMock(spec=StrategyExtractor)
     extractor.extract.return_value = _valid_strategy()
     strategy_repository = NegotiationStrategyRepository()
@@ -334,13 +339,16 @@ def test_duplicate_generation_extracts_then_repository_rejects() -> None:
         extractor,
         strategy_repository,
     )
-    original = service.generate_for_session(session_id)
+    original = service.generate_for_session(session_id, TEST_USER_ID)
 
     with pytest.raises(NegotiationStrategyAlreadyExistsError):
-        service.generate_for_session(session_id)
+        service.generate_for_session(session_id, TEST_USER_ID)
 
     assert extractor.extract.call_count == 2
-    assert strategy_repository.get_by_session(session_id) is original
+    assert (
+        strategy_repository.get_by_session_for_user(session_id, TEST_USER_ID)
+        is original
+    )
 
 
 def test_strategy_service_has_only_confirmed_dependencies() -> None:
@@ -366,14 +374,16 @@ def test_get_for_session_delegates_to_strategy_repository() -> None:
         strategy=_valid_strategy(),
         created_at=datetime.now(UTC),
     )
-    strategy_repository.get_by_session.return_value = expected_record
+    strategy_repository.get_by_session_for_user.return_value = expected_record
     service = StrategyService(
         debrief_repository,
         extractor,
         strategy_repository,
     )
 
-    result = service.get_for_session(session_id)
+    result = service.get_for_session(session_id, TEST_USER_ID)
 
     assert result is expected_record
-    strategy_repository.get_by_session.assert_called_once_with(session_id)
+    strategy_repository.get_by_session_for_user.assert_called_once_with(
+        session_id, TEST_USER_ID
+    )

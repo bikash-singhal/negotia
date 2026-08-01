@@ -40,7 +40,7 @@ class CompletionWorkflowService:
         )
         self._graph: CompletionGraph = build_completion_graph(self._nodes)
 
-    def run(self, session_id: UUID) -> CompletionWorkflowResult:
+    def run(self, session_id: UUID, user_id: UUID) -> CompletionWorkflowResult:
         started_at = perf_counter()
         log_event(
             logger,
@@ -54,7 +54,7 @@ class CompletionWorkflowService:
         try:
             try:
                 final_state = self._graph.invoke(
-                    CompletionWorkflowState(session_id=session_id)
+                    CompletionWorkflowState(session_id=session_id, user_id=user_id)
                 )
             except CompletionArtifactsChangedError:
                 log_event(
@@ -68,7 +68,7 @@ class CompletionWorkflowService:
                     outcome="retrying",
                 )
                 final_state = self._graph.invoke(
-                    CompletionWorkflowState(session_id=session_id)
+                    CompletionWorkflowState(session_id=session_id, user_id=user_id)
                 )
 
             required_fields = {

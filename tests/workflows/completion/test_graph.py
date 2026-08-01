@@ -27,6 +27,7 @@ from app.services.strategy import StrategyService
 from app.workflows.completion.graph import build_completion_graph
 from app.workflows.completion.nodes import CompletionWorkflowNodes
 from app.workflows.completion.state import CompletionWorkflowState
+from tests.ownership import TEST_USER_ID
 
 
 def _create_session(
@@ -35,6 +36,7 @@ def _create_session(
     now = datetime.now(UTC)
     return NegotiationSession(
         id=uuid4(),
+        user_id=TEST_USER_ID,
         scenario_id=uuid4(),
         status=status,
         created_at=now,
@@ -98,6 +100,7 @@ def _create_strategy(
 def _create_memory(session_id: UUID) -> NegotiatorMemoryRecord:
     return NegotiatorMemoryRecord(
         id=uuid4(),
+        user_id=TEST_USER_ID,
         trigger_session_id=session_id,
         memory=NegotiatorMemory(
             recurring_strengths=[],
@@ -136,18 +139,20 @@ def _build_unit_of_work_factory(
 ) -> MagicMock:
     unit_of_work = MagicMock(spec=CompletionUnitOfWork)
     unit_of_work.__enter__.return_value = unit_of_work
-    unit_of_work.negotiation_repository.get_for_update.return_value = session
-    unit_of_work.negotiation_repository.update.side_effect = lambda record: record
-    unit_of_work.debrief_repository.get_by_session.side_effect = lambda _session_id: (
-        debrief_service.get_for_session.return_value
+    unit_of_work.negotiation_repository.get_for_update_for_user.return_value = session
+    unit_of_work.negotiation_repository.update_for_user.side_effect = (
+        lambda record, user_id: record
     )
-    unit_of_work.debrief_repository.create.side_effect = lambda record: record
-    unit_of_work.strategy_repository.get_by_session.side_effect = lambda _session_id: (
-        strategy_service.get_for_session.return_value
+    unit_of_work.debrief_repository.get_by_session_for_user.side_effect = (
+        lambda _session_id, _user_id: debrief_service.get_for_session.return_value
     )
-    unit_of_work.strategy_repository.create.side_effect = lambda record: record
+    unit_of_work.debrief_repository.create.side_effect = lambda record, user_id: record
+    unit_of_work.strategy_repository.get_by_session_for_user.side_effect = (
+        lambda _session_id, _user_id: strategy_service.get_for_session.return_value
+    )
+    unit_of_work.strategy_repository.create.side_effect = lambda record, user_id: record
     unit_of_work.memory_repository.get_by_trigger_session.side_effect = (
-        lambda _session_id: memory_service.get_by_trigger_session.return_value
+        lambda _session_id, _user_id: memory_service.get_by_trigger_session.return_value
     )
     unit_of_work.memory_repository.create.side_effect = lambda record: record
     return MagicMock(return_value=unit_of_work)
@@ -171,25 +176,29 @@ def test_graph_executes_linear_completion_order() -> None:
     ) = _build_services()
     call_order: list[str] = []
     negotiation_service.validate_completion_transition.side_effect = (
-        lambda _session_id: call_order.append("validate") or session
+        lambda _session_id, _user_id: call_order.append("validate") or session
     )
-    turn_service.list_turns.side_effect = lambda _session_id: (
+    turn_service.list_turns.side_effect = lambda _session_id, _user_id: (
         call_order.append("turns") or turns
     )
-    debrief_service.get_for_session.side_effect = lambda _session_id: (
+    debrief_service.get_for_session.side_effect = lambda _session_id, _user_id: (
         call_order.append("debrief lookup") or None
     )
-    debrief_service.prepare_for_session.side_effect = lambda _session_id: (
+    debrief_service.prepare_for_session.side_effect = lambda _session_id, _user_id: (
         call_order.append("debrief create") or debrief
     )
-    strategy_service.get_for_session.side_effect = lambda _session_id: (
+    strategy_service.get_for_session.side_effect = lambda _session_id, _user_id: (
         call_order.append("strategy lookup") or None
     )
-    strategy_service.prepare_for_session.side_effect = lambda _session_id, _debrief: (
-        call_order.append("strategy create") or strategy
+    strategy_service.prepare_for_session.side_effect = (
+        lambda _session_id, _user_id, _debrief: (
+            call_order.append("strategy create") or strategy
+        )
     )
     memory_service.prepare_for_session.side_effect = (
-        lambda _session_id, _debrief, _strategy: call_order.append("memory") or memory
+        lambda _session_id, _user_id, _debrief, _strategy: (
+            call_order.append("memory") or memory
+        )
     )
 
     def mark_completed(_session_id: UUID) -> NegotiationSession:
@@ -210,17 +219,17 @@ def test_graph_executes_linear_completion_order() -> None:
     unit_of_work_factory.side_effect = lambda: (
         call_order.append("unit of work open") or unit_of_work
     )
-    unit_of_work.debrief_repository.create.side_effect = lambda record: (
+    unit_of_work.debrief_repository.create.side_effect = lambda record, user_id: (
         call_order.append("persist debrief") or record
     )
-    unit_of_work.strategy_repository.create.side_effect = lambda record: (
+    unit_of_work.strategy_repository.create.side_effect = lambda record, user_id: (
         call_order.append("persist strategy") or record
     )
     unit_of_work.memory_repository.create.side_effect = lambda record: (
         call_order.append("persist memory") or record
     )
-    unit_of_work.negotiation_repository.update.side_effect = lambda record: (
-        call_order.append("persist completion") or record
+    unit_of_work.negotiation_repository.update_for_user.side_effect = (
+        lambda record, user_id: call_order.append("persist completion") or record
     )
     unit_of_work.commit.side_effect = lambda: call_order.append("commit")
     graph = build_completion_graph(
@@ -234,7 +243,9 @@ def test_graph_executes_linear_completion_order() -> None:
         )
     )
 
-    result = graph.invoke(CompletionWorkflowState(session_id=session.id))
+    result = graph.invoke(
+        CompletionWorkflowState(session_id=session.id, user_id=TEST_USER_ID)
+    )
 
     assert call_order == [
         "validate",
@@ -252,6 +263,14 @@ def test_graph_executes_linear_completion_order() -> None:
         "persist completion",
         "commit",
     ]
+    unit_of_work.negotiation_repository.get_for_update_for_user.assert_called_once_with(
+        session.id,
+        TEST_USER_ID,
+    )
+    unit_of_work.negotiation_repository.update_for_user.assert_called_once_with(
+        session,
+        TEST_USER_ID,
+    )
     unit_of_work.commit.assert_called_once_with()
     assert result["session"] is session
     assert result["debrief_record"] is debrief
@@ -292,7 +311,10 @@ def test_graph_stops_after_failure(
     expected_error = RuntimeError(f"{failing_stage} failed")
     call_order: list[str] = []
 
-    def debrief_result(_session_id: UUID) -> NegotiationDebriefRecord:
+    def debrief_result(
+        _session_id: UUID,
+        _user_id: UUID,
+    ) -> NegotiationDebriefRecord:
         call_order.append("debrief")
         if failing_stage == "debrief":
             raise expected_error
@@ -311,11 +333,11 @@ def test_graph_stops_after_failure(
         return _create_memory(session.id)
 
     debrief_service.prepare_for_session.side_effect = debrief_result
-    strategy_service.prepare_for_session.side_effect = lambda session_id, _debrief: (
-        strategy_result(session_id)
+    strategy_service.prepare_for_session.side_effect = (
+        lambda session_id, _user_id, _debrief: strategy_result(session_id)
     )
     memory_service.prepare_for_session.side_effect = (
-        lambda session_id, _debrief, _strategy: memory_result(session_id)
+        lambda session_id, _user_id, _debrief, _strategy: memory_result(session_id)
     )
     negotiation_service.prepare_completion.side_effect = lambda candidate: (
         call_order.append("mark completed") or session
@@ -338,7 +360,9 @@ def test_graph_stops_after_failure(
     )
 
     with pytest.raises(RuntimeError) as exc_info:
-        graph.invoke(CompletionWorkflowState(session_id=session.id))
+        graph.invoke(
+            CompletionWorkflowState(session_id=session.id, user_id=TEST_USER_ID)
+        )
 
     assert exc_info.value is expected_error
     assert all(call not in call_order for call in forbidden_calls)
@@ -378,8 +402,12 @@ def test_completed_session_reuses_artifacts_without_validation_or_marking() -> N
         )
     )
 
-    first = graph.invoke(CompletionWorkflowState(session_id=session.id))
-    second = graph.invoke(CompletionWorkflowState(session_id=session.id))
+    first = graph.invoke(
+        CompletionWorkflowState(session_id=session.id, user_id=TEST_USER_ID)
+    )
+    second = graph.invoke(
+        CompletionWorkflowState(session_id=session.id, user_id=TEST_USER_ID)
+    )
 
     assert first == second
     assert first["session"] is session

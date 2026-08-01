@@ -3,9 +3,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.dependencies import get_scenario_service
+from app.api.dependencies import get_current_user, get_scenario_service
 from app.domains.scenario.schemas import ScenarioCreate, ScenarioResponse
 from app.domains.scenario.service import ScenarioService
+from app.domains.user.models import User
 
 router = APIRouter()
 
@@ -17,10 +18,11 @@ router = APIRouter()
 )
 async def list_scenarios(
     service: Annotated[ScenarioService, Depends(get_scenario_service)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[ScenarioResponse]:
     return [
         ScenarioResponse.model_validate(scenario)
-        for scenario in service.list_scenarios()
+        for scenario in service.list_scenarios(current_user.id)
     ]
 
 
@@ -32,8 +34,9 @@ async def list_scenarios(
 async def get_scenario(
     scenario_id: UUID,
     service: Annotated[ScenarioService, Depends(get_scenario_service)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> ScenarioResponse:
-    scenario = service.get_scenario(scenario_id)
+    scenario = service.get_scenario(scenario_id, current_user.id)
     if scenario is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -51,6 +54,7 @@ async def get_scenario(
 async def create_scenario(
     request: ScenarioCreate,
     service: Annotated[ScenarioService, Depends(get_scenario_service)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> ScenarioResponse:
-    scenario = service.create_scenario(request)
+    scenario = service.create_scenario(request, current_user.id)
     return ScenarioResponse.model_validate(scenario)

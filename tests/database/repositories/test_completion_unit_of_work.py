@@ -19,6 +19,7 @@ from app.domains.strategy.models import (
     NegotiationStrategy,
     NegotiationStrategyRecord,
 )
+from tests.ownership import TEST_USER_ID
 
 from .conftest import SessionFactory
 
@@ -29,6 +30,7 @@ class ExpectedUnitOfWorkError(Exception):
 
 def _scenario() -> Scenario:
     return Scenario(
+        user_id=TEST_USER_ID,
         title="Distribution agreement",
         description="Negotiate pricing and obligations for a distribution agreement.",
         industry="Consumer goods",
@@ -44,6 +46,7 @@ def _negotiation(scenario_id: UUID) -> NegotiationSession:
     now = datetime.now(UTC)
     return NegotiationSession(
         id=uuid4(),
+        user_id=TEST_USER_ID,
         scenario_id=scenario_id,
         status=NegotiationStatus.COMPLETED,
         created_at=now,
@@ -92,6 +95,7 @@ def _strategy(
 def _memory(session_id: UUID) -> NegotiatorMemoryRecord:
     return NegotiatorMemoryRecord(
         id=uuid4(),
+        user_id=TEST_USER_ID,
         trigger_session_id=session_id,
         memory=NegotiatorMemory(
             recurring_strengths=["Protects primary objectives."],
@@ -118,9 +122,11 @@ def _write_completion_records(
     NegotiatorMemoryRecord,
 ]:
     negotiation = unit_of_work.negotiation_repository.create(_negotiation(scenario_id))
-    debrief = unit_of_work.debrief_repository.create(_debrief(negotiation.id))
+    debrief = unit_of_work.debrief_repository.create(
+        _debrief(negotiation.id), TEST_USER_ID
+    )
     strategy = unit_of_work.strategy_repository.create(
-        _strategy(negotiation.id, debrief.id)
+        _strategy(negotiation.id, debrief.id), TEST_USER_ID
     )
     memory = unit_of_work.memory_repository.create(_memory(negotiation.id))
     return negotiation, debrief, strategy, memory
@@ -196,13 +202,11 @@ def test_exceptional_exit_rolls_back_and_closes_session() -> None:
 
 def test_session_bound_repositories_flush_without_committing() -> None:
     database_session = MagicMock(spec=Session)
-    database_session.scalar.return_value = None
-    scenario_id = uuid4()
 
     with SQLCompletionUnitOfWork(lambda: database_session) as unit_of_work:
-        _write_completion_records(unit_of_work, scenario_id)
+        unit_of_work.negotiation_repository.create(_negotiation(uuid4()))
         database_session.commit.assert_not_called()
-        assert database_session.flush.call_count >= 4
+        database_session.flush.assert_called_once_with()
         unit_of_work.rollback()
 
     database_session.commit.assert_not_called()
@@ -221,24 +225,27 @@ def test_commit_persists_all_unit_of_work_writes(
         )
         unit_of_work.commit()
 
-    assert SQLNegotiationRepository(database_session_factory).get(negotiation.id) == (
-        negotiation
+    assert (
+        SQLNegotiationRepository(database_session_factory).get_for_user(
+            negotiation.id, TEST_USER_ID
+        )
+        == negotiation
     )
     assert (
-        SQLNegotiationDebriefRepository(database_session_factory).get_by_session(
-            negotiation.id
-        )
+        SQLNegotiationDebriefRepository(
+            database_session_factory
+        ).get_by_session_for_user(negotiation.id, TEST_USER_ID)
         == debrief
     )
     assert (
-        SQLNegotiationStrategyRepository(database_session_factory).get_by_session(
-            negotiation.id
-        )
+        SQLNegotiationStrategyRepository(
+            database_session_factory
+        ).get_by_session_for_user(negotiation.id, TEST_USER_ID)
         == strategy
     )
     assert (
         SQLNegotiatorMemoryRepository(database_session_factory).get_by_trigger_session(
-            negotiation.id
+            negotiation.id, TEST_USER_ID
         )
         == memory
     )
@@ -257,23 +264,26 @@ def test_explicit_rollback_removes_all_unit_of_work_writes(
         unit_of_work.rollback()
 
     assert (
-        SQLNegotiationRepository(database_session_factory).get(negotiation.id) is None
-    )
-    assert (
-        SQLNegotiationDebriefRepository(database_session_factory).get_by_session(
-            negotiation.id
+        SQLNegotiationRepository(database_session_factory).get_for_user(
+            negotiation.id, TEST_USER_ID
         )
         is None
     )
     assert (
-        SQLNegotiationStrategyRepository(database_session_factory).get_by_session(
-            negotiation.id
-        )
+        SQLNegotiationDebriefRepository(
+            database_session_factory
+        ).get_by_session_for_user(negotiation.id, TEST_USER_ID)
+        is None
+    )
+    assert (
+        SQLNegotiationStrategyRepository(
+            database_session_factory
+        ).get_by_session_for_user(negotiation.id, TEST_USER_ID)
         is None
     )
     assert (
         SQLNegotiatorMemoryRepository(database_session_factory).get_by_trigger_session(
-            negotiation.id
+            negotiation.id, TEST_USER_ID
         )
         is None
     )
@@ -293,7 +303,10 @@ def test_exception_rolls_back_real_database_writes(
         raise ExpectedUnitOfWorkError
 
     assert (
-        SQLNegotiationRepository(database_session_factory).get(negotiation.id) is None
+        SQLNegotiationRepository(database_session_factory).get_for_user(
+            negotiation.id, TEST_USER_ID
+        )
+        is None
     )
 
 
@@ -305,33 +318,36 @@ def test_standalone_repositories_still_commit_each_write(
         _negotiation(scenario.scenario_id)
     )
     debrief = SQLNegotiationDebriefRepository(database_session_factory).create(
-        _debrief(negotiation.id)
+        _debrief(negotiation.id), TEST_USER_ID
     )
     strategy = SQLNegotiationStrategyRepository(database_session_factory).create(
-        _strategy(negotiation.id, debrief.id)
+        _strategy(negotiation.id, debrief.id), TEST_USER_ID
     )
     memory = SQLNegotiatorMemoryRepository(database_session_factory).create(
         _memory(negotiation.id)
     )
 
-    assert SQLNegotiationRepository(database_session_factory).get(negotiation.id) == (
-        negotiation
+    assert (
+        SQLNegotiationRepository(database_session_factory).get_for_user(
+            negotiation.id, TEST_USER_ID
+        )
+        == negotiation
     )
     assert (
-        SQLNegotiationDebriefRepository(database_session_factory).get_by_session(
-            negotiation.id
-        )
+        SQLNegotiationDebriefRepository(
+            database_session_factory
+        ).get_by_session_for_user(negotiation.id, TEST_USER_ID)
         == debrief
     )
     assert (
-        SQLNegotiationStrategyRepository(database_session_factory).get_by_session(
-            negotiation.id
-        )
+        SQLNegotiationStrategyRepository(
+            database_session_factory
+        ).get_by_session_for_user(negotiation.id, TEST_USER_ID)
         == strategy
     )
     assert (
         SQLNegotiatorMemoryRepository(database_session_factory).get_by_trigger_session(
-            negotiation.id
+            negotiation.id, TEST_USER_ID
         )
         == memory
     )

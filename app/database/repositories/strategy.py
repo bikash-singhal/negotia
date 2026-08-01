@@ -4,11 +4,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.database.models.negotiation import NegotiationSessionModel
 from app.database.models.strategy import NegotiationStrategyModel
 from app.database.repositories._session import (
     RepositorySessionManager,
     SessionFactory,
 )
+from app.domains.negotiation_turn.exceptions import NegotiationSessionNotFoundError
 from app.domains.strategy.exceptions import NegotiationStrategyAlreadyExistsError
 from app.domains.strategy.models import (
     NegotiationStrategy,
@@ -121,9 +123,18 @@ class SQLNegotiationStrategyRepository(NegotiationStrategyRepository):
     def create(
         self,
         record: NegotiationStrategyRecord,
+        user_id: UUID,
     ) -> NegotiationStrategyRecord:
         with self._session_manager.session_scope() as database_session:
             try:
+                session_exists = database_session.scalar(
+                    select(NegotiationSessionModel.id).where(
+                        NegotiationSessionModel.id == record.session_id,
+                        NegotiationSessionModel.user_id == user_id,
+                    )
+                )
+                if session_exists is None:
+                    raise NegotiationSessionNotFoundError(record.session_id)
                 duplicate_id = database_session.scalar(
                     select(NegotiationStrategyModel.id).where(
                         NegotiationStrategyModel.session_id == record.session_id
@@ -141,22 +152,35 @@ class SQLNegotiationStrategyRepository(NegotiationStrategyRepository):
 
             return negotiation_strategy_to_domain(model)
 
-    def get_by_session(
+    def get_by_session_for_user(
         self,
         session_id: UUID,
+        user_id: UUID,
     ) -> NegotiationStrategyRecord | None:
         with self._session_manager.session_scope() as database_session:
             model = database_session.scalar(
-                select(NegotiationStrategyModel).where(
-                    NegotiationStrategyModel.session_id == session_id
+                select(NegotiationStrategyModel)
+                .join(
+                    NegotiationSessionModel,
+                    NegotiationSessionModel.id == NegotiationStrategyModel.session_id,
+                )
+                .where(
+                    NegotiationStrategyModel.session_id == session_id,
+                    NegotiationSessionModel.user_id == user_id,
                 )
             )
             return None if model is None else negotiation_strategy_to_domain(model)
 
-    def list_all(self) -> list[NegotiationStrategyRecord]:
+    def list_for_user(self, user_id: UUID) -> list[NegotiationStrategyRecord]:
         with self._session_manager.session_scope() as database_session:
             models = database_session.scalars(
-                select(NegotiationStrategyModel).order_by(
+                select(NegotiationStrategyModel)
+                .join(
+                    NegotiationSessionModel,
+                    NegotiationSessionModel.id == NegotiationStrategyModel.session_id,
+                )
+                .where(NegotiationSessionModel.user_id == user_id)
+                .order_by(
                     NegotiationStrategyModel.created_at,
                     NegotiationStrategyModel.id,
                 )

@@ -34,6 +34,7 @@ from app.prompts.opponent import OpponentPromptBuilder
 from app.services.adaptive_context import AdaptiveContextService
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentResponseResult, OpponentService
+from tests.ownership import TEST_USER_ID
 
 FAKE_RESPONSE = (
     "I understand your position, but those terms are difficult for us to accept."
@@ -70,6 +71,7 @@ def _create_scenario(
 ) -> Scenario:
     return repository.create(
         Scenario(
+            user_id=TEST_USER_ID,
             title="Enterprise software renewal",
             description="Negotiate the renewal of a multi-year software agreement.",
             industry="Technology",
@@ -95,6 +97,7 @@ def _create_session(
     return repository.create(
         NegotiationSession(
             id=uuid4(),
+            user_id=TEST_USER_ID,
             scenario_id=scenario_id,
             status=NegotiationStatus.CREATED,
             created_at=now,
@@ -119,7 +122,8 @@ def _create_turn(
             content=content,
             turn_number=turn_number,
             created_at=datetime.now(UTC),
-        )
+        ),
+        TEST_USER_ID,
     )
 
 
@@ -142,7 +146,7 @@ def test_generate_response_creates_and_persists_opponent_turn() -> None:
         adaptive_context_service,
     )
 
-    result = service.generate_response(session.id)
+    result = service.generate_response(session.id, TEST_USER_ID)
     turn = result.opponent_turn
 
     assert isinstance(result, OpponentResponseResult)
@@ -154,10 +158,10 @@ def test_generate_response_creates_and_persists_opponent_turn() -> None:
     assert turn.turn_number == user_turn.turn_number + 1
     assert turn.created_at.tzinfo is not None
     assert turn.created_at.utcoffset() == timedelta(0)
-    assert turn_repository.get(turn.id) is turn
+    assert turn_repository.get_for_user(turn.id, TEST_USER_ID) is turn
     assert result.user_turn is user_turn
     assert result.conversation_turns == [user_turn, turn]
-    adaptive_context_service.get_context.assert_called_once_with()
+    adaptive_context_service.get_context.assert_called_once_with(TEST_USER_ID)
 
 
 def test_generate_response_builds_prompts_and_strips_content() -> None:
@@ -208,7 +212,7 @@ def test_generate_response_builds_prompts_and_strips_content() -> None:
         strengths=["Uses objective criteria"],
     )
     adaptive_context_service = _create_adaptive_context_service(adaptive_context)
-    adaptive_context_service.get_context.side_effect = lambda: (
+    adaptive_context_service.get_context.side_effect = lambda _user_id: (
         call_order.append("context") or adaptive_context
     )
     service = OpponentService(
@@ -222,7 +226,7 @@ def test_generate_response_builds_prompts_and_strips_content() -> None:
         adaptive_context_service,
     )
 
-    result = service.generate_response(session.id)
+    result = service.generate_response(session.id, TEST_USER_ID)
     turn = result.opponent_turn
 
     assert turn.content == "Generated opponent response."
@@ -241,7 +245,7 @@ def test_generate_response_builds_prompts_and_strips_content() -> None:
         system_prompt="system prompt",
         user_prompt="user prompt",
     )
-    adaptive_context_service.get_context.assert_called_once_with()
+    adaptive_context_service.get_context.assert_called_once_with(TEST_USER_ID)
     assert result.user_turn is turns[-1]
     assert result.conversation_turns == [*turns, turn]
     assert [item.turn_number for item in result.conversation_turns] == [1, 2, 3, 4]
@@ -250,7 +254,7 @@ def test_generate_response_builds_prompts_and_strips_content() -> None:
 def test_missing_session_stops_before_other_dependencies() -> None:
     session_id = uuid4()
     negotiation_repository = MagicMock(spec=NegotiationRepository)
-    negotiation_repository.get.return_value = None
+    negotiation_repository.get_for_user.return_value = None
     scenario_repository = MagicMock(spec=ScenarioRepository)
     turn_repository = MagicMock(spec=NegotiationTurnRepository)
     prompt_builder = MagicMock(spec=OpponentPromptBuilder)
@@ -267,11 +271,11 @@ def test_missing_session_stops_before_other_dependencies() -> None:
     )
 
     with pytest.raises(NegotiationSessionNotFoundError) as exc_info:
-        service.generate_response(session_id)
+        service.generate_response(session_id, TEST_USER_ID)
 
     assert exc_info.value.session_id == session_id
-    scenario_repository.get.assert_not_called()
-    turn_repository.list_by_session.assert_not_called()
+    scenario_repository.get_for_user.assert_not_called()
+    turn_repository.list_by_session_for_user.assert_not_called()
     turn_repository.create.assert_not_called()
     prompt_builder.build_system_prompt.assert_not_called()
     prompt_builder.build_user_prompt.assert_not_called()
@@ -282,15 +286,16 @@ def test_missing_scenario_stops_before_turns_and_provider() -> None:
     scenario_id = uuid4()
     session = NegotiationSession(
         id=uuid4(),
+        user_id=TEST_USER_ID,
         scenario_id=scenario_id,
         status=NegotiationStatus.CREATED,
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
     )
     negotiation_repository = MagicMock(spec=NegotiationRepository)
-    negotiation_repository.get.return_value = session
+    negotiation_repository.get_for_user.return_value = session
     scenario_repository = MagicMock(spec=ScenarioRepository)
-    scenario_repository.get.return_value = None
+    scenario_repository.get_for_user.return_value = None
     turn_repository = MagicMock(spec=NegotiationTurnRepository)
     prompt_builder = MagicMock(spec=OpponentPromptBuilder)
     llm_provider = MagicMock(spec=LLMProvider)
@@ -306,10 +311,10 @@ def test_missing_scenario_stops_before_turns_and_provider() -> None:
     )
 
     with pytest.raises(ScenarioNotFoundError) as exc_info:
-        service.generate_response(session.id)
+        service.generate_response(session.id, TEST_USER_ID)
 
     assert exc_info.value.scenario_id == scenario_id
-    turn_repository.list_by_session.assert_not_called()
+    turn_repository.list_by_session_for_user.assert_not_called()
     turn_repository.create.assert_not_called()
     prompt_builder.build_system_prompt.assert_not_called()
     llm_provider.generate.assert_not_called()
@@ -321,7 +326,7 @@ def test_empty_history_does_not_call_provider() -> None:
     scenario = _create_scenario(scenario_repository)
     session = _create_session(negotiation_repository, scenario.scenario_id)
     turn_repository = MagicMock(spec=NegotiationTurnRepository)
-    turn_repository.list_by_session.return_value = []
+    turn_repository.list_by_session_for_user.return_value = []
     llm_provider = MagicMock(spec=LLMProvider)
     service = OpponentService(
         negotiation_repository,
@@ -335,7 +340,7 @@ def test_empty_history_does_not_call_provider() -> None:
     )
 
     with pytest.raises(OpponentResponseRequiresUserTurnError):
-        service.generate_response(session.id)
+        service.generate_response(session.id, TEST_USER_ID)
 
     llm_provider.generate.assert_not_called()
     turn_repository.create.assert_not_called()
@@ -355,7 +360,7 @@ def test_latest_opponent_turn_does_not_call_provider() -> None:
         turn_number=2,
         created_at=datetime.now(UTC),
     )
-    turn_repository.list_by_session.return_value = [latest_turn]
+    turn_repository.list_by_session_for_user.return_value = [latest_turn]
     llm_provider = MagicMock(spec=LLMProvider)
     service = OpponentService(
         negotiation_repository,
@@ -369,7 +374,7 @@ def test_latest_opponent_turn_does_not_call_provider() -> None:
     )
 
     with pytest.raises(OpponentResponseOutOfSequenceError) as exc_info:
-        service.generate_response(session.id)
+        service.generate_response(session.id, TEST_USER_ID)
 
     assert exc_info.value.latest_speaker is NegotiationTurnSpeaker.OPPONENT
     llm_provider.generate.assert_not_called()
@@ -401,10 +406,12 @@ def test_state_extraction_failure_does_not_persist_opponent_turn() -> None:
     )
 
     with pytest.raises(InvalidNegotiationStateJsonError) as exc_info:
-        service.generate_response(session.id)
+        service.generate_response(session.id, TEST_USER_ID)
 
     assert exc_info.value is expected_error
-    assert turn_repository.list_by_session(session.id) == [user_turn]
+    assert turn_repository.list_by_session_for_user(session.id, TEST_USER_ID) == [
+        user_turn
+    ]
     profile_builder.build.assert_not_called()
     prompt_builder.build_system_prompt.assert_not_called()
     prompt_builder.build_user_prompt.assert_not_called()
@@ -439,9 +446,11 @@ def test_empty_generated_content_is_not_persisted(
     )
 
     with pytest.raises(EmptyOpponentResponseError):
-        service.generate_response(session.id)
+        service.generate_response(session.id, TEST_USER_ID)
 
-    assert turn_repository.list_by_session(session.id) == [user_turn]
+    assert turn_repository.list_by_session_for_user(session.id, TEST_USER_ID) == [
+        user_turn
+    ]
 
 
 def test_provider_exception_propagates_without_persisting_turn() -> None:
@@ -466,10 +475,12 @@ def test_provider_exception_propagates_without_persisting_turn() -> None:
     )
 
     with pytest.raises(RuntimeError) as exc_info:
-        service.generate_response(session.id)
+        service.generate_response(session.id, TEST_USER_ID)
 
     assert exc_info.value is expected_error
-    assert turn_repository.list_by_session(session.id) == [user_turn]
+    assert turn_repository.list_by_session_for_user(session.id, TEST_USER_ID) == [
+        user_turn
+    ]
 
 
 def test_generation_uses_only_requested_session_history() -> None:
@@ -513,7 +524,7 @@ def test_generation_uses_only_requested_session_history() -> None:
         adaptive_context_service,
     )
 
-    result = service.generate_response(requested_session.id)
+    result = service.generate_response(requested_session.id, TEST_USER_ID)
     generated_turn = result.opponent_turn
 
     assert generated_turn.session_id == requested_session.id
@@ -521,7 +532,7 @@ def test_generation_uses_only_requested_session_history() -> None:
     assert result.user_turn is requested_turn
     assert result.conversation_turns == [requested_turn, generated_turn]
     state_extractor.extract.assert_called_once_with([requested_turn])
-    adaptive_context_service.get_context.assert_called_once_with()
+    adaptive_context_service.get_context.assert_called_once_with(TEST_USER_ID)
     prompt_builder.build_system_prompt.assert_called_once_with(
         scenario,
         OpponentProfileBuilder().build(scenario.difficulty),
@@ -533,7 +544,9 @@ def test_generation_uses_only_requested_session_history() -> None:
         system_prompt="system prompt",
         user_prompt="user prompt",
     )
-    assert turn_repository.list_by_session(other_session.id) == [other_turn]
+    assert turn_repository.list_by_session_for_user(other_session.id, TEST_USER_ID) == [
+        other_turn
+    ]
 
 
 def test_opponent_service_has_only_adaptive_context_memory_boundary() -> None:

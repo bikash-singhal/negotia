@@ -17,6 +17,7 @@ from app.domains.negotiation_turn.exceptions import NegotiationSessionNotFoundEr
 def negotiation_to_model(session: NegotiationSession) -> NegotiationSessionModel:
     return NegotiationSessionModel(
         id=session.id,
+        user_id=session.user_id,
         scenario_id=session.scenario_id,
         status=session.status.value,
         created_at=session.created_at,
@@ -27,6 +28,7 @@ def negotiation_to_model(session: NegotiationSession) -> NegotiationSessionModel
 def negotiation_to_domain(model: NegotiationSessionModel) -> NegotiationSession:
     return NegotiationSession(
         id=model.id,
+        user_id=model.user_id,
         scenario_id=model.scenario_id,
         status=NegotiationStatus(model.status),
         created_at=model.created_at,
@@ -58,36 +60,66 @@ class SQLNegotiationRepository(NegotiationRepository):
 
             return negotiation_to_domain(model)
 
-    def get(self, session_id: UUID) -> NegotiationSession | None:
+    def get_for_user(
+        self,
+        session_id: UUID,
+        user_id: UUID,
+    ) -> NegotiationSession | None:
         with self._session_manager.session_scope() as database_session:
-            model = database_session.get(NegotiationSessionModel, session_id)
+            model = database_session.scalar(
+                select(NegotiationSessionModel).where(
+                    NegotiationSessionModel.id == session_id,
+                    NegotiationSessionModel.user_id == user_id,
+                )
+            )
             return None if model is None else negotiation_to_domain(model)
 
-    def get_for_update(self, session_id: UUID) -> NegotiationSession | None:
+    def get_for_update_for_user(
+        self,
+        session_id: UUID,
+        user_id: UUID,
+    ) -> NegotiationSession | None:
         with self._session_manager.session_scope() as database_session:
             model = database_session.scalar(
                 select(NegotiationSessionModel)
-                .where(NegotiationSessionModel.id == session_id)
+                .where(
+                    NegotiationSessionModel.id == session_id,
+                    NegotiationSessionModel.user_id == user_id,
+                )
                 .with_for_update()
             )
             return None if model is None else negotiation_to_domain(model)
 
-    def list(self) -> list[NegotiationSession]:
+    def list_for_user(self, user_id: UUID) -> list[NegotiationSession]:
         with self._session_manager.session_scope() as database_session:
             models = database_session.scalars(
-                select(NegotiationSessionModel).order_by(
+                select(NegotiationSessionModel)
+                .where(NegotiationSessionModel.user_id == user_id)
+                .order_by(
                     NegotiationSessionModel.created_at,
                     NegotiationSessionModel.id,
                 )
             ).all()
             return [negotiation_to_domain(model) for model in models]
 
-    def update(self, session: NegotiationSession) -> NegotiationSession:
+    def update_for_user(
+        self,
+        session: NegotiationSession,
+        user_id: UUID,
+    ) -> NegotiationSession:
         with self._session_manager.session_scope() as database_session:
-            model = database_session.get(NegotiationSessionModel, session.id)
+            model = database_session.scalar(
+                select(NegotiationSessionModel).where(
+                    NegotiationSessionModel.id == session.id,
+                    NegotiationSessionModel.user_id == user_id,
+                )
+            )
             if model is None:
                 raise NegotiationSessionNotFoundError(session.id)
 
+            if session.user_id != user_id:
+                raise NegotiationSessionNotFoundError(session.id)
+            model.user_id = session.user_id
             model.scenario_id = session.scenario_id
             model.status = session.status.value
             model.created_at = session.created_at

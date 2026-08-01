@@ -16,6 +16,7 @@ SessionFactory = Callable[[], Session]
 def scenario_to_model(scenario: Scenario) -> ScenarioModel:
     return ScenarioModel(
         scenario_id=scenario.scenario_id,
+        user_id=scenario.user_id,
         title=scenario.title,
         description=scenario.description,
         industry=scenario.industry,
@@ -35,6 +36,7 @@ def scenario_to_model(scenario: Scenario) -> ScenarioModel:
 def scenario_to_domain(model: ScenarioModel) -> Scenario:
     return Scenario(
         scenario_id=model.scenario_id,
+        user_id=model.user_id,
         title=model.title,
         description=model.description,
         industry=model.industry,
@@ -68,17 +70,21 @@ class SQLScenarioRepository(ScenarioRepository):
 
             return scenario_to_domain(model)
 
-    def get(self, scenario_id: UUID) -> Scenario | None:
+    def get_for_user(self, scenario_id: UUID, user_id: UUID) -> Scenario | None:
         with self._session_factory() as database_session:
-            model = database_session.get(ScenarioModel, scenario_id)
+            model = database_session.scalar(
+                select(ScenarioModel).where(
+                    ScenarioModel.scenario_id == scenario_id,
+                    ScenarioModel.user_id == user_id,
+                )
+            )
             return None if model is None else scenario_to_domain(model)
 
-    def list(self) -> list[Scenario]:
+    def list_for_user(self, user_id: UUID) -> list[Scenario]:
         with self._session_factory() as database_session:
             models = database_session.scalars(
-                select(ScenarioModel).order_by(
-                    ScenarioModel.created_at,
-                    ScenarioModel.scenario_id,
-                )
+                select(ScenarioModel)
+                .where(ScenarioModel.user_id == user_id)
+                .order_by(ScenarioModel.created_at, ScenarioModel.scenario_id)
             ).all()
             return [scenario_to_domain(model) for model in models]

@@ -37,6 +37,7 @@ from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
 from app.services.strategy import StrategyExtractor, StrategyService
 from app.workflows.completion.service import CompletionWorkflowService
+from tests.api.v1.authentication import TEST_USER, authenticated_request
 from tests.workflows.completion.unit_of_work import (
     build_in_memory_unit_of_work_factory,
 )
@@ -200,7 +201,13 @@ def completion_context() -> Iterator[CompletionContext]:
 @pytest.fixture
 def client(completion_context: CompletionContext) -> Iterator[TestClient]:
     del completion_context
-    with TestClient(app, raise_server_exceptions=False) as test_client:
+    with (
+        authenticated_request(),
+        TestClient(
+            app,
+            raise_server_exceptions=False,
+        ) as test_client,
+    ):
         yield test_client
 
 
@@ -391,7 +398,7 @@ def test_second_completion_returns_populated_memory_fields(
     assert "trigger_session_id" not in body
     assert "source_session_ids" not in body
     memory_record = completion_context.memory_repository.get_by_trigger_session(
-        _parse_uuid(second_session["id"])
+        _parse_uuid(second_session["id"]), TEST_USER.id
     )
     assert memory_record is not None
     assert body["memory_id"] == str(memory_record.id)
@@ -454,7 +461,7 @@ def test_later_completion_creates_new_memory_version(
     second_memory_id = _parse_uuid(second_response.json()["memory_id"])
     third_memory_id = _parse_uuid(third_response.json()["memory_id"])
     assert second_memory_id != third_memory_id
-    versions = completion_context.memory_repository.list_all()
+    versions = completion_context.memory_repository.list_for_user(TEST_USER.id)
     assert len(versions) == 2
     assert versions[0].id == second_memory_id
     assert versions[0].memory.sessions_analyzed == 2
@@ -486,8 +493,8 @@ def test_abandoned_session_cannot_be_completed(
     completion_context: CompletionContext,
 ) -> None:
     session = _create_session(client)
-    stored_session = completion_context.negotiation_repository.get(
-        _parse_uuid(session["id"])
+    stored_session = completion_context.negotiation_repository.get_for_user(
+        _parse_uuid(session["id"]), TEST_USER.id
     )
     assert stored_session is not None
     stored_session.status = NegotiationStatus.ABANDONED
@@ -575,13 +582,15 @@ def test_debrief_failure_does_not_complete_session(
             "message": "An unexpected error occurred",
         }
     }
-    persisted_session = completion_context.negotiation_repository.get(
-        _parse_uuid(session["id"])
+    persisted_session = completion_context.negotiation_repository.get_for_user(
+        _parse_uuid(session["id"]), TEST_USER.id
     )
     assert persisted_session is not None
     assert persisted_session.status is NegotiationStatus.CREATED
     assert (
-        completion_context.debrief_repository.get_by_session(persisted_session.id)
+        completion_context.debrief_repository.get_by_session_for_user(
+            persisted_session.id, TEST_USER.id
+        )
         is None
     )
 
@@ -601,13 +610,19 @@ def test_repeated_completion_is_idempotent(
     assert second_response.json() == first_body
     assert completion_context.artifact_provider.generate.call_count == 2
     session_id = _parse_uuid(session["id"])
-    debrief_record = completion_context.debrief_repository.get_by_session(session_id)
-    strategy_record = completion_context.strategy_repository.get_by_session(session_id)
+    debrief_record = completion_context.debrief_repository.get_by_session_for_user(
+        session_id, TEST_USER.id
+    )
+    strategy_record = completion_context.strategy_repository.get_by_session_for_user(
+        session_id, TEST_USER.id
+    )
     assert debrief_record is not None
     assert strategy_record is not None
     assert debrief_record.id == _parse_uuid(first_body["debrief_id"])
     assert strategy_record.id == _parse_uuid(first_body["strategy_id"])
-    persisted_session = completion_context.negotiation_repository.get(session_id)
+    persisted_session = completion_context.negotiation_repository.get_for_user(
+        session_id, TEST_USER.id
+    )
     assert persisted_session is not None
     assert persisted_session.updated_at == _parse_datetime(first_body["completed_at"])
 
@@ -635,17 +650,25 @@ def test_completion_recovers_from_prior_invalid_json_without_duplicate_artifacts
 
     assert failed_response.status_code == 500
     assert (
-        completion_context.debrief_repository.get_by_session(target_session_id) is None
-    )
-    assert (
-        completion_context.strategy_repository.get_by_session(target_session_id) is None
-    )
-    assert (
-        completion_context.memory_repository.get_by_trigger_session(target_session_id)
+        completion_context.debrief_repository.get_by_session_for_user(
+            target_session_id, TEST_USER.id
+        )
         is None
     )
-    incomplete_session = completion_context.negotiation_repository.get(
-        target_session_id
+    assert (
+        completion_context.strategy_repository.get_by_session_for_user(
+            target_session_id, TEST_USER.id
+        )
+        is None
+    )
+    assert (
+        completion_context.memory_repository.get_by_trigger_session(
+            target_session_id, TEST_USER.id
+        )
+        is None
+    )
+    incomplete_session = completion_context.negotiation_repository.get_for_user(
+        target_session_id, TEST_USER.id
     )
     assert incomplete_session is not None
     assert incomplete_session.status is NegotiationStatus.CREATED
@@ -681,14 +704,14 @@ def test_completion_recovers_from_prior_invalid_json_without_duplicate_artifacts
 
     assert recovered_response.status_code == 200
     assert completion_context.artifact_provider.generate.call_count == 3
-    debrief_record = completion_context.debrief_repository.get_by_session(
-        target_session_id
+    debrief_record = completion_context.debrief_repository.get_by_session_for_user(
+        target_session_id, TEST_USER.id
     )
-    strategy_record = completion_context.strategy_repository.get_by_session(
-        target_session_id
+    strategy_record = completion_context.strategy_repository.get_by_session_for_user(
+        target_session_id, TEST_USER.id
     )
     memory_record = completion_context.memory_repository.get_by_trigger_session(
-        target_session_id
+        target_session_id, TEST_USER.id
     )
     assert debrief_record is not None
     assert strategy_record is not None
@@ -699,14 +722,18 @@ def test_completion_recovers_from_prior_invalid_json_without_duplicate_artifacts
     assert (
         sum(
             record.session_id == target_session_id
-            for record in completion_context.strategy_repository.list_all()
+            for record in completion_context.strategy_repository.list_for_user(
+                TEST_USER.id
+            )
         )
         == 1
     )
     assert (
         sum(
             record.trigger_session_id == target_session_id
-            for record in completion_context.memory_repository.list_all()
+            for record in completion_context.memory_repository.list_for_user(
+                TEST_USER.id
+            )
         )
         == 1
     )
@@ -728,7 +755,7 @@ def test_completion_reuses_existing_debrief_and_generates_missing_strategy(
     session = _create_completed_exchange(client)
     session_id = _parse_uuid(session["id"])
     existing_record = completion_context.debrief_service.generate_for_session(
-        session_id
+        session_id, TEST_USER.id
     )
     completion_context.artifact_provider.generate.reset_mock()
 
@@ -739,13 +766,19 @@ def test_completion_reuses_existing_debrief_and_generates_missing_strategy(
     assert body["debrief_id"] == str(existing_record.id)
     assert completion_context.artifact_provider.generate.call_count == 1
     assert (
-        completion_context.debrief_repository.get_by_session(session_id)
+        completion_context.debrief_repository.get_by_session_for_user(
+            session_id, TEST_USER.id
+        )
         is existing_record
     )
-    strategy_record = completion_context.strategy_repository.get_by_session(session_id)
+    strategy_record = completion_context.strategy_repository.get_by_session_for_user(
+        session_id, TEST_USER.id
+    )
     assert strategy_record is not None
     assert body["strategy_id"] == str(strategy_record.id)
-    persisted_session = completion_context.negotiation_repository.get(session_id)
+    persisted_session = completion_context.negotiation_repository.get_for_user(
+        session_id, TEST_USER.id
+    )
     assert persisted_session is not None
     assert persisted_session.status is NegotiationStatus.COMPLETED
 
@@ -756,9 +789,11 @@ def test_completion_reuses_existing_debrief_and_strategy_during_recovery(
 ) -> None:
     session = _create_completed_exchange(client)
     session_id = _parse_uuid(session["id"])
-    debrief_record = completion_context.debrief_service.generate_for_session(session_id)
+    debrief_record = completion_context.debrief_service.generate_for_session(
+        session_id, TEST_USER.id
+    )
     strategy_record = completion_context.strategy_service.generate_for_session(
-        session_id
+        session_id, TEST_USER.id
     )
     completion_context.artifact_provider.generate.reset_mock()
 
@@ -770,14 +805,20 @@ def test_completion_reuses_existing_debrief_and_strategy_during_recovery(
     assert body["strategy_id"] == str(strategy_record.id)
     completion_context.artifact_provider.generate.assert_not_called()
     assert (
-        completion_context.debrief_repository.get_by_session(session_id)
+        completion_context.debrief_repository.get_by_session_for_user(
+            session_id, TEST_USER.id
+        )
         is debrief_record
     )
     assert (
-        completion_context.strategy_repository.get_by_session(session_id)
+        completion_context.strategy_repository.get_by_session_for_user(
+            session_id, TEST_USER.id
+        )
         is strategy_record
     )
-    persisted_session = completion_context.negotiation_repository.get(session_id)
+    persisted_session = completion_context.negotiation_repository.get_for_user(
+        session_id, TEST_USER.id
+    )
     assert persisted_session is not None
     assert persisted_session.status is NegotiationStatus.COMPLETED
 
@@ -788,7 +829,9 @@ def test_strategy_failure_does_not_complete_session(
 ) -> None:
     session = _create_completed_exchange(client)
     session_id = _parse_uuid(session["id"])
-    debrief_record = completion_context.debrief_service.generate_for_session(session_id)
+    debrief_record = completion_context.debrief_service.generate_for_session(
+        session_id, TEST_USER.id
+    )
     completion_context.artifact_provider.generate.reset_mock()
     completion_context.artifact_provider.generate.side_effect = RuntimeError(
         "Strategy provider failed"
@@ -803,14 +846,23 @@ def test_strategy_failure_does_not_complete_session(
             "message": "An unexpected error occurred",
         }
     }
-    persisted_session = completion_context.negotiation_repository.get(session_id)
+    persisted_session = completion_context.negotiation_repository.get_for_user(
+        session_id, TEST_USER.id
+    )
     assert persisted_session is not None
     assert persisted_session.status is NegotiationStatus.CREATED
     assert (
-        completion_context.debrief_repository.get_by_session(session_id)
+        completion_context.debrief_repository.get_by_session_for_user(
+            session_id, TEST_USER.id
+        )
         is debrief_record
     )
-    assert completion_context.strategy_repository.get_by_session(session_id) is None
+    assert (
+        completion_context.strategy_repository.get_by_session_for_user(
+            session_id, TEST_USER.id
+        )
+        is None
+    )
 
 
 def test_memory_preparation_failure_persists_nothing_and_retry_regenerates(
@@ -849,17 +901,27 @@ def test_memory_preparation_failure_persists_nothing_and_retry_regenerates(
     )
 
     assert failed_response.status_code == 500
-    persisted_session = completion_context.negotiation_repository.get(second_session_id)
+    persisted_session = completion_context.negotiation_repository.get_for_user(
+        second_session_id, TEST_USER.id
+    )
     assert persisted_session is not None
     assert persisted_session.status is NegotiationStatus.CREATED
     assert (
-        completion_context.debrief_repository.get_by_session(second_session_id) is None
+        completion_context.debrief_repository.get_by_session_for_user(
+            second_session_id, TEST_USER.id
+        )
+        is None
     )
     assert (
-        completion_context.strategy_repository.get_by_session(second_session_id) is None
+        completion_context.strategy_repository.get_by_session_for_user(
+            second_session_id, TEST_USER.id
+        )
+        is None
     )
     assert (
-        completion_context.memory_repository.get_by_trigger_session(second_session_id)
+        completion_context.memory_repository.get_by_trigger_session(
+            second_session_id, TEST_USER.id
+        )
         is None
     )
     assert completion_context.artifact_provider.generate.call_count == 3
@@ -872,11 +934,15 @@ def test_memory_preparation_failure_persists_nothing_and_retry_regenerates(
 
     assert retry_response.status_code == 200
     assert (
-        completion_context.debrief_repository.get_by_session(second_session_id)
+        completion_context.debrief_repository.get_by_session_for_user(
+            second_session_id, TEST_USER.id
+        )
         is not None
     )
     assert (
-        completion_context.strategy_repository.get_by_session(second_session_id)
+        completion_context.strategy_repository.get_by_session_for_user(
+            second_session_id, TEST_USER.id
+        )
         is not None
     )
     assert retry_response.json()["memory"] == _expected_memory()
@@ -916,7 +982,7 @@ def test_retry_after_status_failure_regenerates_rolled_back_artifacts(
             f"/api/v1/negotiations/{second_session['id']}/complete"
         )
         memory_record = completion_context.memory_repository.get_by_trigger_session(
-            second_session_id
+            second_session_id, TEST_USER.id
         )
         completion_context.artifact_provider.generate.reset_mock()
         retry_response = client.post(
@@ -926,7 +992,7 @@ def test_retry_after_status_failure_regenerates_rolled_back_artifacts(
     assert failed_response.status_code == 500
     assert memory_record is None
     assert retry_response.status_code == 200
-    assert len(completion_context.memory_repository.list_all()) == 1
+    assert len(completion_context.memory_repository.list_for_user(TEST_USER.id)) == 1
     assert completion_context.artifact_provider.generate.call_count == 3
 
 
@@ -935,8 +1001,8 @@ def test_completed_session_without_debrief_returns_safe_internal_error(
     completion_context: CompletionContext,
 ) -> None:
     session = _create_session(client)
-    stored_session = completion_context.negotiation_repository.get(
-        _parse_uuid(session["id"])
+    stored_session = completion_context.negotiation_repository.get_for_user(
+        _parse_uuid(session["id"]), TEST_USER.id
     )
     assert stored_session is not None
     stored_session.status = NegotiationStatus.COMPLETED
@@ -958,9 +1024,11 @@ def test_completed_session_without_strategy_returns_safe_internal_error(
 ) -> None:
     session = _create_completed_exchange(client)
     session_id = _parse_uuid(session["id"])
-    completion_context.debrief_service.generate_for_session(session_id)
+    completion_context.debrief_service.generate_for_session(session_id, TEST_USER.id)
     completion_context.artifact_provider.generate.reset_mock()
-    stored_session = completion_context.negotiation_repository.get(session_id)
+    stored_session = completion_context.negotiation_repository.get_for_user(
+        session_id, TEST_USER.id
+    )
     assert stored_session is not None
     stored_session.status = NegotiationStatus.COMPLETED
 
@@ -974,4 +1042,9 @@ def test_completed_session_without_strategy_returns_safe_internal_error(
         }
     }
     completion_context.artifact_provider.generate.assert_not_called()
-    assert completion_context.strategy_repository.get_by_session(session_id) is None
+    assert (
+        completion_context.strategy_repository.get_by_session_for_user(
+            session_id, TEST_USER.id
+        )
+        is None
+    )

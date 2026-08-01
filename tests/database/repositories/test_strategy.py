@@ -16,6 +16,7 @@ from app.database.repositories.strategy import (
 )
 from app.domains.debrief.models import NegotiationDebrief, NegotiationDebriefRecord
 from app.domains.negotiation.models import NegotiationSession, NegotiationStatus
+from app.domains.negotiation_turn.exceptions import NegotiationSessionNotFoundError
 from app.domains.scenario.models import Scenario, ScenarioDifficulty
 from app.domains.strategy.exceptions import NegotiationStrategyAlreadyExistsError
 from app.domains.strategy.models import (
@@ -24,12 +25,14 @@ from app.domains.strategy.models import (
     NegotiationTactic,
 )
 from app.services.strategy import StrategyExtractor, StrategyService
+from tests.ownership import TEST_USER_ID
 
 from .conftest import SessionFactory
 
 
 def _scenario() -> Scenario:
     return Scenario(
+        user_id=TEST_USER_ID,
         title="Employment offer",
         description="Negotiate compensation and working terms for a new role.",
         industry="Technology",
@@ -55,6 +58,7 @@ def _persist_artifacts(
         session = negotiation_repository.create(
             NegotiationSession(
                 id=uuid4(),
+                user_id=TEST_USER_ID,
                 scenario_id=scenario.scenario_id,
                 status=NegotiationStatus.CREATED,
                 created_at=created_at,
@@ -75,7 +79,8 @@ def _persist_artifacts(
                 ),
                 observation_count=2,
                 created_at=created_at,
-            )
+            ),
+            TEST_USER_ID,
         )
         artifacts.append((session, debrief))
     return artifacts
@@ -159,17 +164,17 @@ def test_create_get_and_list_return_detached_persisted_records(
     repository = SQLNegotiationStrategyRepository(database_session_factory)
     record = _record(session.id, debrief.id)
 
-    created = repository.create(record)
+    created = repository.create(record, TEST_USER_ID)
     reloaded = SQLNegotiationStrategyRepository(
         database_session_factory
-    ).get_by_session(session.id)
+    ).get_by_session_for_user(session.id, TEST_USER_ID)
 
     assert created == record
     assert created is not record
     assert created.strategy is not record.strategy
     assert reloaded == record
-    assert repository.get_by_session(uuid4()) is None
-    assert repository.list_all() == [record]
+    assert repository.get_by_session_for_user(uuid4(), TEST_USER_ID) is None
+    assert repository.list_for_user(TEST_USER_ID) == [record]
 
 
 def test_get_by_session_keeps_sessions_isolated_and_list_is_chronological(
@@ -183,19 +188,23 @@ def test_get_by_session_keeps_sessions_isolated_and_list_is_chronological(
             artifacts[0][0].id,
             artifacts[0][1].id,
             created_at=now,
-        )
+        ),
+        TEST_USER_ID,
     )
     second = repository.create(
         _record(
             artifacts[1][0].id,
             artifacts[1][1].id,
             created_at=now + timedelta(seconds=1),
-        )
+        ),
+        TEST_USER_ID,
     )
 
-    assert repository.get_by_session(artifacts[0][0].id) == first
-    assert repository.get_by_session(artifacts[1][0].id) == second
-    assert repository.list_all() == [first, second]
+    assert repository.get_by_session_for_user(artifacts[0][0].id, TEST_USER_ID) == first
+    assert (
+        repository.get_by_session_for_user(artifacts[1][0].id, TEST_USER_ID) == second
+    )
+    assert repository.list_for_user(TEST_USER_ID) == [first, second]
 
 
 def test_duplicate_session_preserves_domain_exception_behavior(
@@ -203,13 +212,13 @@ def test_duplicate_session_preserves_domain_exception_behavior(
 ) -> None:
     session, debrief = _persist_artifacts(database_session_factory)[0]
     repository = SQLNegotiationStrategyRepository(database_session_factory)
-    original = repository.create(_record(session.id, debrief.id))
+    original = repository.create(_record(session.id, debrief.id), TEST_USER_ID)
 
     with pytest.raises(NegotiationStrategyAlreadyExistsError) as exc_info:
-        repository.create(_record(session.id, debrief.id))
+        repository.create(_record(session.id, debrief.id), TEST_USER_ID)
 
     assert exc_info.value.session_id == session.id
-    assert repository.get_by_session(session.id) == original
+    assert repository.get_by_session_for_user(session.id, TEST_USER_ID) == original
 
 
 def test_duplicate_primary_key_raises_integrity_error(
@@ -219,7 +228,8 @@ def test_duplicate_primary_key_raises_integrity_error(
     repository = SQLNegotiationStrategyRepository(database_session_factory)
     record_id = uuid4()
     repository.create(
-        _record(artifacts[0][0].id, artifacts[0][1].id, record_id=record_id)
+        _record(artifacts[0][0].id, artifacts[0][1].id, record_id=record_id),
+        TEST_USER_ID,
     )
 
     with pytest.raises(IntegrityError):
@@ -228,18 +238,19 @@ def test_duplicate_primary_key_raises_integrity_error(
                 artifacts[1][0].id,
                 artifacts[1][1].id,
                 record_id=record_id,
-            )
+            ),
+            TEST_USER_ID,
         )
 
 
-def test_missing_session_foreign_key_raises_integrity_error(
+def test_missing_session_is_rejected_before_foreign_key_write(
     database_session_factory: SessionFactory,
 ) -> None:
     _, debrief = _persist_artifacts(database_session_factory)[0]
     repository = SQLNegotiationStrategyRepository(database_session_factory)
 
-    with pytest.raises(IntegrityError):
-        repository.create(_record(uuid4(), debrief.id))
+    with pytest.raises(NegotiationSessionNotFoundError):
+        repository.create(_record(uuid4(), debrief.id), TEST_USER_ID)
 
 
 def test_missing_debrief_foreign_key_raises_integrity_error(
@@ -249,7 +260,7 @@ def test_missing_debrief_foreign_key_raises_integrity_error(
     repository = SQLNegotiationStrategyRepository(database_session_factory)
 
     with pytest.raises(IntegrityError):
-        repository.create(_record(session.id, uuid4()))
+        repository.create(_record(session.id, uuid4()), TEST_USER_ID)
 
 
 def test_rollback_preserves_previously_persisted_strategy(
@@ -257,12 +268,12 @@ def test_rollback_preserves_previously_persisted_strategy(
 ) -> None:
     session, debrief = _persist_artifacts(database_session_factory)[0]
     repository = SQLNegotiationStrategyRepository(database_session_factory)
-    original = repository.create(_record(session.id, debrief.id))
+    original = repository.create(_record(session.id, debrief.id), TEST_USER_ID)
 
-    with pytest.raises(IntegrityError):
-        repository.create(_record(uuid4(), uuid4()))
+    with pytest.raises(NegotiationSessionNotFoundError):
+        repository.create(_record(uuid4(), uuid4()), TEST_USER_ID)
 
-    assert repository.get_by_session(session.id) == original
+    assert repository.get_by_session_for_user(session.id, TEST_USER_ID) == original
 
 
 def test_each_operation_uses_a_fresh_sqlalchemy_session(
@@ -277,9 +288,9 @@ def test_each_operation_uses_a_fresh_sqlalchemy_session(
         return database_session
 
     repository = SQLNegotiationStrategyRepository(tracking_session_factory)
-    repository.create(_record(session.id, debrief.id))
-    repository.get_by_session(session.id)
-    repository.list_all()
+    repository.create(_record(session.id, debrief.id), TEST_USER_ID)
+    repository.get_by_session_for_user(session.id, TEST_USER_ID)
+    repository.list_for_user(TEST_USER_ID)
 
     assert len(opened_sessions) == 3
     assert len({id(database_session) for database_session in opened_sessions}) == 3
@@ -295,13 +306,13 @@ def test_strategy_service_behavior_is_unchanged_and_persisted(
     repository = SQLNegotiationStrategyRepository(database_session_factory)
     service = StrategyService(debrief_repository, extractor, repository)
 
-    result = service.generate_for_session(session.id)
+    result = service.generate_for_session(session.id, TEST_USER_ID)
     reloaded = SQLNegotiationStrategyRepository(
         database_session_factory
-    ).get_by_session(session.id)
+    ).get_by_session_for_user(session.id, TEST_USER_ID)
 
     assert result.strategy == _strategy()
     assert result.debrief_id == debrief.id
     assert reloaded == result
-    assert service.get_for_session(session.id) == result
+    assert service.get_for_session(session.id, TEST_USER_ID) == result
     extractor.extract.assert_called_once_with(debrief)

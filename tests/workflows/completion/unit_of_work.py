@@ -17,7 +17,9 @@ from app.domains.strategy.repository import NegotiationStrategyRepository
 type RepositorySnapshot = tuple[
     dict[UUID, NegotiationSession],
     dict[UUID, NegotiationDebriefRecord],
+    dict[UUID, UUID],
     dict[UUID, NegotiationStrategyRecord],
+    dict[UUID, UUID],
     list[NegotiatorMemoryRecord],
     dict[UUID, NegotiatorMemoryRecord],
 ]
@@ -57,7 +59,9 @@ class InMemoryCompletionUnitOfWork(CompletionUnitOfWork):
         self._snapshot = (
             deepcopy(self._negotiation_repository._sessions),
             deepcopy(self._debrief_repository._records),
+            deepcopy(self._debrief_repository._user_ids),
             deepcopy(self._strategy_repository._records),
+            deepcopy(self._strategy_repository._user_ids),
             deepcopy(self._memory_repository._records),
             deepcopy(self._memory_repository._records_by_trigger_session),
         )
@@ -81,13 +85,17 @@ class InMemoryCompletionUnitOfWork(CompletionUnitOfWork):
         (
             negotiation_sessions,
             debrief_records,
+            debrief_user_ids,
             strategy_records,
+            strategy_user_ids,
             memory_records,
             memory_records_by_trigger,
         ) = self._snapshot
         self._negotiation_repository._sessions = negotiation_sessions
         self._debrief_repository._records = debrief_records
+        self._debrief_repository._user_ids = debrief_user_ids
         self._strategy_repository._records = strategy_records
+        self._strategy_repository._user_ids = strategy_user_ids
         self._memory_repository._records = memory_records
         self._memory_repository._records_by_trigger_session = memory_records_by_trigger
         self._snapshot = None

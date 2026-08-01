@@ -33,8 +33,9 @@ and does not call AWS. The Bedrock provider is also implemented and can be selec
 through environment configuration. DebriefService synthesizes patterns from
 stored coach observations only when a client explicitly completes a negotiation.
 StrategyService then turns that persisted debrief into actionable recommendations.
-MemoryService then generates or reuses an immutable single-user negotiator profile
-when at least two persisted Debrief/Strategy pairs exist. The completion response
+MemoryService then generates or reuses an immutable, user-scoped negotiator
+profile when at least two persisted Debrief/Strategy pairs exist for that user.
+The completion response
 includes the Debrief, Strategy, and optional historically associated Memory.
 AdaptiveContextService provides a read-only runtime projection of the latest
 Memory. A compiled LangGraph workflow now coordinates the completion lifecycle
@@ -48,9 +49,11 @@ repositories. None of the AI artifacts has a standalone API.
 - Versioned FastAPI API under `/api/v1`
 - Username/password registration and login with bcrypt password hashing
 - Expiring JWT access tokens and an authenticated current-user endpoint
-- Scenario creation, listing, and retrieval
-- Negotiation-session creation, listing, and retrieval
-- Negotiation-turn creation and retrieval
+- Bearer authentication and owner authorization for every negotiation business
+  endpoint
+- User-scoped Scenario creation, listing, and retrieval
+- User-scoped negotiation-session creation, listing, and retrieval
+- User-scoped negotiation-turn creation and retrieval
 - Ordered turn history for each negotiation session
 - AI opponent-response generation with optional historical Adaptive Context
 - Explicit user-triggered negotiation completion
@@ -69,7 +72,7 @@ repositories. None of the AI artifacts has a standalone API.
 - One PostgreSQL-backed Strategy record per negotiation session
 - LLM-assisted cross-session negotiator Memory extraction from persisted Debrief
   and Strategy records
-- Immutable PostgreSQL-backed negotiator Memory versions for the single-user MVP
+- Immutable PostgreSQL-backed negotiator Memory versions isolated by user
 - Read-only Adaptive Context projection derived from the latest negotiator Memory
 - Deterministic opponent behavior profiles for each scenario difficulty
 - Scenario-aware system prompts and complete-history user prompts
@@ -135,8 +138,10 @@ flowchart TD
 
     subgraph Authentication["Authentication subsystem"]
         AuthAPI["Authentication API"]
+        CurrentUser["JWT current-user dependency"]
         UserService["UserService"]
         AuthAPI --> UserService
+        CurrentUser --> UserService
         UserService --> UserRepository
     end
 
@@ -245,6 +250,11 @@ flowchart TD
     API --> OpponentAPI
     API --> CompletionAPI
     API --> AuthAPI
+    CurrentUser --> ScenarioAPI
+    CurrentUser --> SessionAPI
+    CurrentUser --> TurnAPI
+    CurrentUser --> OpponentAPI
+    CurrentUser --> CompletionAPI
     OpponentAPI --> Engine
     CompletionAPI --> Engine
     Engine -->|"request / response result"| OpponentService
@@ -272,6 +282,13 @@ flowchart TD
 
 ```
 
+Registration, login, and health are public. Every negotiation business route
+resolves the authenticated user from its bearer token and passes only that
+validated `user_id` through services, workflow state, and owner-aware repository
+queries. Request bodies cannot choose an owner. Scenarios, negotiation sessions,
+and Memory records store direct `users.id` foreign keys; turn, Coach, Debrief, and
+Strategy ownership is derived through the negotiation session.
+
 SQL repositories are instantiated once for the application and shared by the
 services that need them. Each operation opens a short SQLAlchemy session and
 persists detached domain records to PostgreSQL. This lets an opponent response
@@ -281,8 +298,9 @@ only those stored observations and persists at most one synthesized debrief per
 session.
 StrategyService reads only a persisted NegotiationDebriefRecord and stores at most
 one strategy per session.
-MemoryService lists persisted strategies, resolves the corresponding debriefs by
-session ID, and stores each eligible profile as a new immutable version.
+MemoryService lists only the authenticated user's persisted strategies, resolves
+that user's corresponding debriefs by session ID, and stores each eligible
+profile as a new immutable version belonging to that user.
 Each completion-triggered version is associated internally with its triggering
 session.
 AdaptiveContextService depends only on MemoryService. It reads the latest Memory
@@ -293,6 +311,11 @@ coordinates these existing services through explicit validation, Debrief,
 Strategy, Memory, and completion nodes. The workflow has no repository
 dependencies. It returns domain records in a typed internal result, which
 NegotiationEngine maps into its existing completion result.
+
+The completion Unit of Work locks the negotiation by both `session_id` and
+authenticated `user_id`. Structured artifact generation happens before its short
+transaction; Debrief, Strategy, optional completion-triggered Memory, and the
+completed session status are then persisted atomically in one SQLAlchemy session.
 
 ## End-to-end opponent workflow
 
@@ -414,15 +437,16 @@ output.
 
 ### Scenario
 
-A Scenario defines the opponent role, objective, difficulty, personality,
+A Scenario belongs to one authenticated user and defines the opponent role,
+objective, difficulty, personality,
 negotiation style, constraints, private context, and walk-away conditions. Public
 `ScenarioResponse` objects intentionally exclude private context and walk-away
 conditions.
 
 ### Negotiation session
 
-A NegotiationSession references a Scenario by `scenario_id` and tracks its status
-and timestamps.
+A NegotiationSession belongs to the same authenticated user as its referenced
+Scenario, links it by `scenario_id`, and tracks its status and timestamps.
 
 ### Negotiation turn
 
@@ -482,9 +506,9 @@ NegotiatorMemory identifies cross-session strengths, weaknesses, improving
 skills, persistent risks, priority focus areas, and recommended drills using only
 persisted NegotiationDebriefRecord and NegotiationStrategyRecord pairs. Each
 NegotiatorMemoryRecord stores the sorted source session IDs and a UTC creation
-time. Records form an append-only version history for the current single-user
-MVP. Completion generates a version only when at least two complete artifact
-pairs exist, so the first eligible negotiation can return no Memory. Each
+time. Records form an append-only version history scoped to one authenticated
+user. Completion generates a version only when at least two complete artifact
+pairs for that user exist, so the first eligible negotiation can return no Memory. Each
 completion-triggered record retains internal trigger lineage, and repeated
 completion returns that historical version rather than the latest global one.
 Memory still has no public endpoint.
@@ -624,6 +648,12 @@ uv run alembic upgrade head
 The example environment configures the local PostgreSQL container. Application
 startup does not run migrations automatically; apply Alembic migrations before
 running the API or database-backed tests.
+
+The ownership migration is intentionally destructive for pre-release negotiation
+data: it deletes existing Scenario rows and their dependent negotiation-domain
+artifacts before adding required `user_id` foreign keys. Existing User rows are
+preserved. This avoids silently assigning historical data to an arbitrary user;
+back up any development data that must be retained before upgrading.
 
 ## LLM provider configuration
 
@@ -806,6 +836,22 @@ Do not add `--volumes` to that command. PostgreSQL data remains in the
 | `POST` | `/api/v1/negotiations/{session_id}/opponent-response` | Generate and store the next opponent turn. |
 | `POST` | `/api/v1/negotiations/{session_id}/complete` | Explicitly complete a negotiation and return its persisted Debrief, Strategy, and optional Memory. |
 
+Health, registration, and login are public. Every other endpoint in the table
+requires an `Authorization: Bearer <access-token>` header. For example:
+
+```powershell
+$login = Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/auth/login `
+  -ContentType "application/json" `
+  -Body '{"username":"your-username","password":"your-password"}'
+
+$headers = @{ Authorization = "Bearer $($login.access_token)" }
+Invoke-RestMethod -Uri http://127.0.0.1:8000/api/v1/scenarios -Headers $headers
+```
+
+Lists and resource lookups are owner-scoped. A resource owned by another user is
+reported as not found, matching the public behavior for a nonexistent resource.
+
 The opponent-response endpoint requires an existing user turn. It returns `409`
 when there is no user turn or when the latest turn already belongs to the
 opponent.
@@ -852,18 +898,18 @@ uv run ruff format --check .
   or available through a retrieval endpoint.
 - Debriefs are persisted in PostgreSQL and exposed only as part of the explicit
   completion response; no standalone retrieval endpoint exists.
-- Completion currently uses independent repository transactions for Debrief,
-  Strategy, optional Memory, and session-status writes. A retry reuses artifacts
-  committed before a later completion step failed. The planned completion Unit of
-  Work is not yet implemented.
+- Completion artifact generation occurs outside the database transaction. If the
+  persisted artifacts change before finalization, the workflow retries once with
+  fresh state; provider calls can therefore be repeated in that race.
 - The completion graph is synchronous, linear, and stateless. It does not use
   checkpointing, conditional branches, retries, streaming, or human-in-the-loop
   controls.
 - Strategies are persisted in PostgreSQL and have no standalone retrieval API.
-- Negotiator Memory is versioned in PostgreSQL, is scoped to the single-user MVP,
-  and has no standalone API.
-- Negotiation resources are not yet associated with users, so ownership-based
-  authorization is not implemented.
+- Negotiator Memory is versioned and user-scoped in PostgreSQL but has no
+  standalone API.
+- Authentication uses bearer access tokens only; refresh tokens, revocation,
+  password reset, email verification, roles, and administrative APIs are not yet
+  implemented.
 - Adaptive difficulty is not implemented.
 - Opponent quality depends on the selected provider, model, scenario data, and
   prompt design.
@@ -903,15 +949,16 @@ Completed:
 - [x] Production-like local API and PostgreSQL containers with migration startup
 - [x] Single-instance EC2 Compose configuration and PostgreSQL backup helper
 - [x] Username/password authentication with bcrypt and expiring JWT access tokens
+- [x] Per-user negotiation-resource ownership and authorization
+- [x] User-isolated Negotiator Memory and Adaptive Context
+- [x] Completion-scoped Unit of Work with LLM generation outside the transaction
 
 Planned:
 
 - [ ] Richer multi-round opponent behavior
 - [ ] Standalone Coach, debrief, strategy, and memory APIs
 - [ ] Adaptive difficulty
-- [ ] Durable authenticated negotiator profiles
-- [ ] Completion-scoped Unit of Work with LLM generation outside the transaction
-- [ ] Negotiation-resource ownership and authorization
+- [ ] Durable editable user profiles beyond authentication identity
 - [ ] Web frontend and production deployment
 
 ## License status

@@ -56,16 +56,23 @@ class OpponentService:
         self._llm_provider = llm_provider
         self._adaptive_context_service = adaptive_context_service
 
-    def generate_response(self, session_id: UUID) -> OpponentResponseResult:
-        negotiation = self._negotiation_repository.get(session_id)
+    def generate_response(
+        self,
+        session_id: UUID,
+        user_id: UUID,
+    ) -> OpponentResponseResult:
+        negotiation = self._negotiation_repository.get_for_user(session_id, user_id)
         if negotiation is None:
             raise NegotiationSessionNotFoundError(session_id)
 
-        scenario = self._scenario_repository.get(negotiation.scenario_id)
+        scenario = self._scenario_repository.get_for_user(
+            negotiation.scenario_id,
+            user_id,
+        )
         if scenario is None:
             raise ScenarioNotFoundError(negotiation.scenario_id)
 
-        turns = self._turn_repository.list_by_session(session_id)
+        turns = self._turn_repository.list_by_session_for_user(session_id, user_id)
         if not turns:
             raise OpponentResponseRequiresUserTurnError(session_id)
 
@@ -78,7 +85,7 @@ class OpponentService:
 
         state: NegotiationState = self._state_extractor.extract(turns)
         profile = self._profile_builder.build(scenario.difficulty)
-        adaptive_context = self._adaptive_context_service.get_context()
+        adaptive_context = self._adaptive_context_service.get_context(user_id)
         system_prompt = self._prompt_builder.build_system_prompt(
             scenario,
             profile,
@@ -106,10 +113,13 @@ class OpponentService:
             created_at=datetime.now(UTC),
         )
 
-        persisted_turn = self._turn_repository.create(opponent_turn)
+        persisted_turn = self._turn_repository.create(opponent_turn, user_id)
 
         return OpponentResponseResult(
             user_turn=latest_turn,
             opponent_turn=persisted_turn,
-            conversation_turns=self._turn_repository.list_by_session(session_id),
+            conversation_turns=self._turn_repository.list_by_session_for_user(
+                session_id,
+                user_id,
+            ),
         )

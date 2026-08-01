@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.dependencies import get_negotiation_turn_service
+from app.api.dependencies import get_current_user, get_negotiation_turn_service
 from app.domains.negotiation_turn.exceptions import (
     NegotiationSessionNotFoundError,
 )
@@ -12,6 +12,7 @@ from app.domains.negotiation_turn.schemas import (
     NegotiationTurnResponse,
 )
 from app.domains.negotiation_turn.service import NegotiationTurnService
+from app.domains.user.models import User
 
 router = APIRouter()
 
@@ -27,9 +28,10 @@ async def create_turn(
         NegotiationTurnService,
         Depends(get_negotiation_turn_service),
     ],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> NegotiationTurnResponse:
     try:
-        turn = service.create_turn(request)
+        turn = service.create_turn(request, current_user.id)
     except NegotiationSessionNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -50,8 +52,9 @@ async def get_turn(
         NegotiationTurnService,
         Depends(get_negotiation_turn_service),
     ],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> NegotiationTurnResponse:
-    turn = service.get_turn(turn_id)
+    turn = service.get_turn(turn_id, current_user.id)
     if turn is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -72,9 +75,10 @@ async def list_turns(
         NegotiationTurnService,
         Depends(get_negotiation_turn_service),
     ],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[NegotiationTurnResponse]:
     try:
-        turns = service.list_turns(session_id)
+        turns = service.list_turns(session_id, current_user.id)
     except NegotiationSessionNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

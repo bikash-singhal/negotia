@@ -30,10 +30,11 @@ class NegotiationEngine:
         self._coach_service = coach_service
         self._completion_workflow_service = completion_workflow_service
 
-    def generate_response(self, session_id: UUID) -> NegotiationTurn:
-        result = self._opponent_service.generate_response(session_id)
+    def generate_response(self, session_id: UUID, user_id: UUID) -> NegotiationTurn:
+        result = self._opponent_service.generate_response(session_id, user_id)
         self._coach_service.analyze_exchange(
             session_id,
+            user_id,
             result.conversation_turns,
             result.user_turn,
             result.opponent_turn,
@@ -43,8 +44,9 @@ class NegotiationEngine:
     def complete_session(
         self,
         session_id: UUID,
+        user_id: UUID,
     ) -> NegotiationCompletionResult:
-        workflow_result = self._completion_workflow_service.run(session_id)
+        workflow_result = self._completion_workflow_service.run(session_id, user_id)
         return NegotiationCompletionResult(
             workflow_result.session,
             workflow_result.debrief_record,

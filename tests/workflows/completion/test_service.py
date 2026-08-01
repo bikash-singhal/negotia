@@ -26,6 +26,7 @@ from app.workflows.completion.state import (
     CompletionWorkflowResult,
     CompletionWorkflowState,
 )
+from tests.ownership import TEST_USER_ID
 
 
 def _create_final_state(
@@ -34,6 +35,7 @@ def _create_final_state(
     now = datetime.now(UTC)
     session = NegotiationSession(
         id=session_id,
+        user_id=TEST_USER_ID,
         scenario_id=uuid4(),
         status=NegotiationStatus.COMPLETED,
         created_at=now,
@@ -70,6 +72,7 @@ def _create_final_state(
     )
     state = CompletionWorkflowState(
         session_id=session_id,
+        user_id=TEST_USER_ID,
         session=session,
         debrief_record=debrief,
         strategy_record=strategy,
@@ -100,11 +103,13 @@ def test_service_compiles_once_invokes_once_and_returns_typed_result() -> None:
         return_value=graph,
     ) as build_graph:
         service = _build_service()
-        result = service.run(session_id)
+        result = service.run(session_id, TEST_USER_ID)
 
     assert result == expected_result
     build_graph.assert_called_once_with(service._nodes)
-    graph.invoke.assert_called_once_with(CompletionWorkflowState(session_id=session_id))
+    graph.invoke.assert_called_once_with(
+        CompletionWorkflowState(session_id=session_id, user_id=TEST_USER_ID)
+    )
 
 
 def test_service_does_not_recompile_between_runs() -> None:
@@ -118,8 +123,8 @@ def test_service_does_not_recompile_between_runs() -> None:
         return_value=graph,
     ) as build_graph:
         service = _build_service()
-        service.run(session_id)
-        service.run(session_id)
+        service.run(session_id, TEST_USER_ID)
+        service.run(session_id, TEST_USER_ID)
 
     build_graph.assert_called_once_with(service._nodes)
     assert graph.invoke.call_count == 2
@@ -128,7 +133,10 @@ def test_service_does_not_recompile_between_runs() -> None:
 def test_service_rejects_incomplete_final_state() -> None:
     session_id = uuid4()
     graph = MagicMock()
-    graph.invoke.return_value = CompletionWorkflowState(session_id=session_id)
+    graph.invoke.return_value = CompletionWorkflowState(
+        session_id=session_id,
+        user_id=TEST_USER_ID,
+    )
 
     with patch(
         "app.workflows.completion.service.build_completion_graph",
@@ -137,7 +145,7 @@ def test_service_rejects_incomplete_final_state() -> None:
         service = _build_service()
 
     with pytest.raises(RuntimeError, match="incomplete state"):
-        service.run(session_id)
+        service.run(session_id, TEST_USER_ID)
 
 
 def test_service_retries_artifact_change_once_and_logs_exactly_once() -> None:
@@ -169,7 +177,7 @@ def test_service_retries_artifact_change_once_and_logs_exactly_once() -> None:
         service = _build_service()
 
     try:
-        result = service.run(session_id)
+        result = service.run(session_id, TEST_USER_ID)
     finally:
         workflow_logger.removeHandler(handler)
         workflow_logger.setLevel(previous_level)
@@ -186,8 +194,12 @@ def test_service_retries_artifact_change_once_and_logs_exactly_once() -> None:
     assert graph.invoke.call_count == 2
     first_state = graph.invoke.call_args_list[0].args[0]
     second_state = graph.invoke.call_args_list[1].args[0]
-    assert first_state == CompletionWorkflowState(session_id=session_id)
-    assert second_state == CompletionWorkflowState(session_id=session_id)
+    assert first_state == CompletionWorkflowState(
+        session_id=session_id, user_id=TEST_USER_ID
+    )
+    assert second_state == CompletionWorkflowState(
+        session_id=session_id, user_id=TEST_USER_ID
+    )
     assert first_state is not second_state
 
 
@@ -205,7 +217,7 @@ def test_service_propagates_second_artifact_change_after_exactly_one_retry() -> 
         service = _build_service()
 
     with pytest.raises(CompletionArtifactsChangedError) as exc_info:
-        service.run(session_id)
+        service.run(session_id, TEST_USER_ID)
 
     assert exc_info.value is second_error
     assert graph.invoke.call_count == 2
@@ -224,7 +236,9 @@ def test_service_does_not_retry_unrelated_errors() -> None:
         service = _build_service()
 
     with pytest.raises(RuntimeError) as exc_info:
-        service.run(session_id)
+        service.run(session_id, TEST_USER_ID)
 
     assert exc_info.value is expected_error
-    graph.invoke.assert_called_once_with(CompletionWorkflowState(session_id=session_id))
+    graph.invoke.assert_called_once_with(
+        CompletionWorkflowState(session_id=session_id, user_id=TEST_USER_ID)
+    )

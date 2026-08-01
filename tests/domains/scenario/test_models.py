@@ -2,10 +2,12 @@ from datetime import timedelta
 from uuid import UUID
 
 from app.domains.scenario.models import Scenario, ScenarioDifficulty
+from tests.ownership import TEST_USER_ID
 
 
 def _create_scenario() -> Scenario:
     return Scenario(
+        user_id=TEST_USER_ID,
         title="Supplier contract renewal",
         description="Renegotiate the annual supplier contract and delivery terms.",
         industry="Manufacturing",

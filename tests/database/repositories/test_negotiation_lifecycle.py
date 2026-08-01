@@ -35,6 +35,7 @@ from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
 from app.services.strategy import StrategyExtractor, StrategyService
 from app.workflows.completion.service import CompletionWorkflowService
+from tests.ownership import TEST_USER_ID
 
 from .conftest import SessionFactory
 
@@ -202,23 +203,27 @@ def test_complete_negotiation_lifecycle_persists_all_aggregates_idempotently(
         completion_workflow,
     )
 
-    scenario = ScenarioService(scenario_repository).create_scenario(_scenario_request())
+    scenario = ScenarioService(scenario_repository).create_scenario(
+        _scenario_request(), TEST_USER_ID
+    )
     sessions = []
     completion_results = []
     for session_number in range(1, 3):
         session = negotiation_service.create_session(
-            NegotiationSessionCreate(scenario_id=scenario.scenario_id)
+            NegotiationSessionCreate(scenario_id=scenario.scenario_id),
+            TEST_USER_ID,
         )
         turn_service.create_turn(
             NegotiationTurnCreate(
                 session_id=session.id,
                 speaker=NegotiationTurnSpeaker.USER,
                 content=f"For negotiation {session_number}, we need better terms.",
-            )
+            ),
+            TEST_USER_ID,
         )
-        engine.generate_response(session.id)
+        engine.generate_response(session.id, TEST_USER_ID)
         sessions.append(session)
-        completion_results.append(engine.complete_session(session.id))
+        completion_results.append(engine.complete_session(session.id, TEST_USER_ID))
 
     target_session = sessions[-1]
     first_completion = completion_results[-1]
@@ -226,7 +231,7 @@ def test_complete_negotiation_lifecycle_persists_all_aggregates_idempotently(
     assert first_completion.memory_record is not None
     original_completed_at = first_completion.session.updated_at
 
-    repeated_completion = engine.complete_session(target_session.id)
+    repeated_completion = engine.complete_session(target_session.id, TEST_USER_ID)
 
     fresh_scenario_repository = SQLScenarioRepository(database_session_factory)
     fresh_negotiation_repository = SQLNegotiationRepository(database_session_factory)
@@ -238,13 +243,27 @@ def test_complete_negotiation_lifecycle_persists_all_aggregates_idempotently(
     )
     fresh_memory_repository = SQLNegotiatorMemoryRepository(database_session_factory)
 
-    persisted_scenario = fresh_scenario_repository.get(scenario.scenario_id)
-    persisted_session = fresh_negotiation_repository.get(target_session.id)
-    persisted_turns = fresh_turn_repository.list_by_session(target_session.id)
-    persisted_observations = fresh_coach_repository.list_by_session(target_session.id)
-    persisted_debrief = fresh_debrief_repository.get_by_session(target_session.id)
-    persisted_strategy = fresh_strategy_repository.get_by_session(target_session.id)
-    persisted_memory = fresh_memory_repository.get_by_trigger_session(target_session.id)
+    persisted_scenario = fresh_scenario_repository.get_for_user(
+        scenario.scenario_id, TEST_USER_ID
+    )
+    persisted_session = fresh_negotiation_repository.get_for_user(
+        target_session.id, TEST_USER_ID
+    )
+    persisted_turns = fresh_turn_repository.list_by_session_for_user(
+        target_session.id, TEST_USER_ID
+    )
+    persisted_observations = fresh_coach_repository.list_by_session_for_user(
+        target_session.id, TEST_USER_ID
+    )
+    persisted_debrief = fresh_debrief_repository.get_by_session_for_user(
+        target_session.id, TEST_USER_ID
+    )
+    persisted_strategy = fresh_strategy_repository.get_by_session_for_user(
+        target_session.id, TEST_USER_ID
+    )
+    persisted_memory = fresh_memory_repository.get_by_trigger_session(
+        target_session.id, TEST_USER_ID
+    )
 
     assert persisted_scenario == scenario
     assert persisted_session is not None
@@ -264,9 +283,16 @@ def test_complete_negotiation_lifecycle_persists_all_aggregates_idempotently(
     assert repeated_completion.debrief_record == first_completion.debrief_record
     assert repeated_completion.strategy_record == first_completion.strategy_record
     assert repeated_completion.memory_record == first_completion.memory_record
-    assert len(fresh_coach_repository.list_by_session(target_session.id)) == 1
-    assert len(fresh_strategy_repository.list_all()) == 2
-    assert len(fresh_memory_repository.list_all()) == 1
+    assert (
+        len(
+            fresh_coach_repository.list_by_session_for_user(
+                target_session.id, TEST_USER_ID
+            )
+        )
+        == 1
+    )
+    assert len(fresh_strategy_repository.list_for_user(TEST_USER_ID)) == 2
+    assert len(fresh_memory_repository.list_for_user(TEST_USER_ID)) == 1
     assert debrief_extractor.extract.call_count == 2
     assert strategy_extractor.extract.call_count == 2
     assert memory_extractor.extract.call_count == 1
@@ -277,7 +303,9 @@ def test_complete_negotiation_lifecycle_persists_all_aggregates_idempotently(
         memory_extractor,
         fresh_memory_repository,
     )
-    adaptive_context = AdaptiveContextService(fresh_memory_service).get_context()
+    adaptive_context = AdaptiveContextService(fresh_memory_service).get_context(
+        TEST_USER_ID
+    )
     assert adaptive_context == AdaptiveContext(
         focus_areas=["Concession planning"],
         coaching_focus=["Diagnostic questioning"],

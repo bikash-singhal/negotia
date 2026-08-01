@@ -6,6 +6,7 @@ from app.domains.scenario.models import Scenario, ScenarioDifficulty
 from app.domains.scenario.repository import ScenarioRepository
 from app.domains.scenario.schemas import ScenarioCreate
 from app.domains.scenario.service import ScenarioService
+from tests.ownership import TEST_USER_ID
 
 
 def _create_request() -> ScenarioCreate:
@@ -29,6 +30,7 @@ def _create_scenario() -> Scenario:
     request = _create_request()
     return Scenario(
         scenario_id=uuid4(),
+        user_id=TEST_USER_ID,
         title=request.title,
         description=request.description,
         industry=request.industry,
@@ -49,7 +51,7 @@ def test_create_scenario_copies_mutable_lists() -> None:
     service = ScenarioService(ScenarioRepository())
     request = _create_request()
 
-    scenario = service.create_scenario(request)
+    scenario = service.create_scenario(request, TEST_USER_ID)
 
     assert scenario.constraints is not request.constraints
     assert scenario.hidden_context is not request.hidden_context
@@ -61,7 +63,7 @@ def test_create_scenario_maps_every_request_field() -> None:
     service = ScenarioService(repository)
     request = _create_request()
 
-    scenario = service.create_scenario(request)
+    scenario = service.create_scenario(request, TEST_USER_ID)
 
     assert scenario.title == request.title
     assert scenario.description == request.description
@@ -79,7 +81,7 @@ def test_create_scenario_maps_every_request_field() -> None:
 def test_create_scenario_generates_uuid() -> None:
     service = ScenarioService(ScenarioRepository())
 
-    scenario = service.create_scenario(_create_request())
+    scenario = service.create_scenario(_create_request(), TEST_USER_ID)
 
     assert isinstance(scenario.scenario_id, UUID)
 
@@ -87,7 +89,7 @@ def test_create_scenario_generates_uuid() -> None:
 def test_create_scenario_timestamps_are_timezone_aware() -> None:
     service = ScenarioService(ScenarioRepository())
 
-    scenario = service.create_scenario(_create_request())
+    scenario = service.create_scenario(_create_request(), TEST_USER_ID)
 
     assert scenario.created_at.tzinfo is not None
     assert scenario.created_at.utcoffset() == timedelta(0)
@@ -98,7 +100,7 @@ def test_create_scenario_timestamps_are_timezone_aware() -> None:
 def test_create_scenario_timestamps_are_equal_initially() -> None:
     service = ScenarioService(ScenarioRepository())
 
-    scenario = service.create_scenario(_create_request())
+    scenario = service.create_scenario(_create_request(), TEST_USER_ID)
 
     assert scenario.created_at == scenario.updated_at
 
@@ -107,30 +109,30 @@ def test_create_scenario_is_stored_in_repository() -> None:
     repository = ScenarioRepository()
     service = ScenarioService(repository)
 
-    scenario = service.create_scenario(_create_request())
+    scenario = service.create_scenario(_create_request(), TEST_USER_ID)
 
-    assert repository.get(scenario.scenario_id) is scenario
+    assert repository.get_for_user(scenario.scenario_id, TEST_USER_ID) is scenario
 
 
 def test_get_scenario_delegates_to_repository() -> None:
     repository = MagicMock(spec=ScenarioRepository)
     service = ScenarioService(repository)
     scenario = _create_scenario()
-    repository.get.return_value = scenario
+    repository.get_for_user.return_value = scenario
 
-    result = service.get_scenario(scenario.scenario_id)
+    result = service.get_scenario(scenario.scenario_id, TEST_USER_ID)
 
     assert result is scenario
-    repository.get.assert_called_once_with(scenario.scenario_id)
+    repository.get_for_user.assert_called_once_with(scenario.scenario_id, TEST_USER_ID)
 
 
 def test_list_scenarios_delegates_to_repository() -> None:
     repository = MagicMock(spec=ScenarioRepository)
     service = ScenarioService(repository)
     scenarios = [_create_scenario(), _create_scenario()]
-    repository.list.return_value = scenarios
+    repository.list_for_user.return_value = scenarios
 
-    result = service.list_scenarios()
+    result = service.list_scenarios(TEST_USER_ID)
 
     assert result == scenarios
-    repository.list.assert_called_once_with()
+    repository.list_for_user.assert_called_once_with(TEST_USER_ID)

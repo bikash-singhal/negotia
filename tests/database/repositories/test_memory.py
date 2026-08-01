@@ -19,6 +19,7 @@ from app.domains.debrief.repository import NegotiationDebriefRepository
 from app.domains.memory.exceptions import NegotiatorMemoryAlreadyExistsError
 from app.domains.memory.models import NegotiatorMemory, NegotiatorMemoryRecord
 from app.domains.negotiation.models import NegotiationSession, NegotiationStatus
+from app.domains.negotiation_turn.exceptions import NegotiationSessionNotFoundError
 from app.domains.scenario.models import Scenario, ScenarioDifficulty
 from app.domains.strategy.models import (
     NegotiationStrategy,
@@ -26,12 +27,14 @@ from app.domains.strategy.models import (
 )
 from app.domains.strategy.repository import NegotiationStrategyRepository
 from app.services.memory import MemoryExtractor, MemoryService
+from tests.ownership import TEST_USER_ID
 
 from .conftest import SessionFactory
 
 
 def _scenario() -> Scenario:
     return Scenario(
+        user_id=TEST_USER_ID,
         title="Supplier contract renewal",
         description="Negotiate pricing and delivery commitments with a supplier.",
         industry="Manufacturing",
@@ -57,6 +60,7 @@ def _persist_sessions(
             repository.create(
                 NegotiationSession(
                     id=uuid4(),
+                    user_id=TEST_USER_ID,
                     scenario_id=scenario.scenario_id,
                     status=NegotiationStatus.COMPLETED,
                     created_at=created_at,
@@ -89,6 +93,7 @@ def _record(
 ) -> NegotiatorMemoryRecord:
     return NegotiatorMemoryRecord(
         id=record_id or uuid4(),
+        user_id=TEST_USER_ID,
         trigger_session_id=trigger_session_id,
         memory=_memory(len(source_session_ids)),
         source_session_ids=source_session_ids,
@@ -169,15 +174,15 @@ def test_create_reads_and_list_return_detached_persisted_records(
 
     created = repository.create(record)
     fresh_repository = SQLNegotiatorMemoryRepository(database_session_factory)
-    reloaded = fresh_repository.get_by_trigger_session(sessions[1].id)
+    reloaded = fresh_repository.get_by_trigger_session(sessions[1].id, TEST_USER_ID)
 
     assert created == record
     assert created is not record
     assert created.memory is not record.memory
     assert reloaded == record
-    assert fresh_repository.get_by_trigger_session(uuid4()) is None
-    assert fresh_repository.get_latest() == record
-    assert fresh_repository.list_all() == [record]
+    assert fresh_repository.get_by_trigger_session(uuid4(), TEST_USER_ID) is None
+    assert fresh_repository.get_latest(TEST_USER_ID) == record
+    assert fresh_repository.list_for_user(TEST_USER_ID) == [record]
 
 
 def test_trigger_lookup_is_isolated_and_versions_are_chronological(
@@ -201,10 +206,10 @@ def test_trigger_lookup_is_isolated_and_versions_are_chronological(
         )
     )
 
-    assert repository.get_by_trigger_session(sessions[0].id) == first
-    assert repository.get_by_trigger_session(sessions[1].id) == second
-    assert repository.list_all() == [first, second]
-    assert repository.get_latest() == second
+    assert repository.get_by_trigger_session(sessions[0].id, TEST_USER_ID) == first
+    assert repository.get_by_trigger_session(sessions[1].id, TEST_USER_ID) == second
+    assert repository.list_for_user(TEST_USER_ID) == [first, second]
+    assert repository.get_latest(TEST_USER_ID) == second
 
 
 def test_multiple_standalone_versions_are_allowed_and_not_trigger_records(
@@ -217,8 +222,8 @@ def test_multiple_standalone_versions_are_allowed_and_not_trigger_records(
     first = repository.create(_record(sources))
     second = repository.create(_record(sources))
 
-    assert repository.list_all() == [first, second]
-    assert repository.get_by_trigger_session(sessions[0].id) is None
+    assert repository.list_for_user(TEST_USER_ID) == [first, second]
+    assert repository.get_by_trigger_session(sessions[0].id, TEST_USER_ID) is None
 
 
 def test_duplicate_trigger_preserves_domain_exception_behavior(
@@ -233,7 +238,7 @@ def test_duplicate_trigger_preserves_domain_exception_behavior(
         repository.create(_record(sources, trigger_session_id=sessions[0].id))
 
     assert exc_info.value.trigger_session_id == sessions[0].id
-    assert repository.get_by_trigger_session(sessions[0].id) == original
+    assert repository.get_by_trigger_session(sessions[0].id, TEST_USER_ID) == original
 
 
 def test_duplicate_primary_key_raises_integrity_error(
@@ -249,13 +254,13 @@ def test_duplicate_primary_key_raises_integrity_error(
         repository.create(_record(sources, record_id=record_id))
 
 
-def test_missing_trigger_session_foreign_key_raises_integrity_error(
+def test_missing_trigger_session_is_rejected_before_foreign_key_write(
     database_session_factory: SessionFactory,
 ) -> None:
     sessions = _persist_sessions(database_session_factory)
     repository = SQLNegotiatorMemoryRepository(database_session_factory)
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises(NegotiationSessionNotFoundError):
         repository.create(
             _record(
                 (sessions[0].id, sessions[1].id),
@@ -264,13 +269,13 @@ def test_missing_trigger_session_foreign_key_raises_integrity_error(
         )
 
 
-def test_missing_source_session_foreign_key_raises_integrity_error(
+def test_missing_source_session_is_rejected_before_foreign_key_write(
     database_session_factory: SessionFactory,
 ) -> None:
     session = _persist_sessions(database_session_factory, count=1)[0]
     repository = SQLNegotiatorMemoryRepository(database_session_factory)
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises(NegotiationSessionNotFoundError):
         repository.create(_record((session.id, uuid4())))
 
 
@@ -281,11 +286,11 @@ def test_rollback_preserves_previously_persisted_memory(
     repository = SQLNegotiatorMemoryRepository(database_session_factory)
     original = repository.create(_record((sessions[0].id, sessions[1].id)))
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises(NegotiationSessionNotFoundError):
         repository.create(_record((sessions[0].id, uuid4())))
 
-    assert repository.list_all() == [original]
-    assert repository.get_latest() == original
+    assert repository.list_for_user(TEST_USER_ID) == [original]
+    assert repository.get_latest(TEST_USER_ID) == original
 
 
 def test_each_operation_uses_a_fresh_sqlalchemy_session(
@@ -306,9 +311,11 @@ def test_each_operation_uses_a_fresh_sqlalchemy_session(
             trigger_session_id=sessions[0].id,
         )
     )
-    repository.get_latest()
-    repository.list_all()
-    repository.get_by_trigger_session(record.trigger_session_id or uuid4())
+    repository.get_latest(TEST_USER_ID)
+    repository.list_for_user(TEST_USER_ID)
+    repository.get_by_trigger_session(
+        record.trigger_session_id or uuid4(), TEST_USER_ID
+    )
 
     assert len(opened_sessions) == 4
     assert len({id(database_session) for database_session in opened_sessions}) == 4
@@ -321,8 +328,10 @@ def test_memory_service_behavior_is_unchanged_and_persisted(
     debrief_repository = NegotiationDebriefRepository()
     strategy_repository = NegotiationStrategyRepository()
     for session in sessions:
-        debrief = debrief_repository.create(_debrief_record(session.id))
-        strategy_repository.create(_strategy_record(session.id, debrief.id))
+        debrief = debrief_repository.create(_debrief_record(session.id), TEST_USER_ID)
+        strategy_repository.create(
+            _strategy_record(session.id, debrief.id), TEST_USER_ID
+        )
 
     extractor = MagicMock(spec=MemoryExtractor)
     extractor.extract.return_value = _memory()
@@ -334,13 +343,13 @@ def test_memory_service_behavior_is_unchanged_and_persisted(
         repository,
     )
 
-    result = service.generate_for_session(sessions[1].id)
+    result = service.generate_for_session(sessions[1].id, TEST_USER_ID)
 
     assert result is not None
     reloaded = SQLNegotiatorMemoryRepository(
         database_session_factory
-    ).get_by_trigger_session(sessions[1].id)
-    repeated = service.generate_for_session(sessions[1].id)
+    ).get_by_trigger_session(sessions[1].id, TEST_USER_ID)
+    repeated = service.generate_for_session(sessions[1].id, TEST_USER_ID)
     assert reloaded == result
     assert repeated == result
     assert result.source_session_ids == tuple(sorted((s.id for s in sessions), key=str))

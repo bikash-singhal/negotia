@@ -10,6 +10,7 @@ from app.database.repositories.scenario import (
     scenario_to_model,
 )
 from app.domains.scenario.models import Scenario, ScenarioDifficulty
+from tests.ownership import TEST_USER_ID
 
 from .conftest import SessionFactory
 
@@ -18,6 +19,7 @@ def _scenario() -> Scenario:
     now = datetime.now(UTC)
     return Scenario(
         scenario_id=uuid4(),
+        user_id=TEST_USER_ID,
         title="Supplier renewal",
         description="Renegotiate supplier pricing and delivery commitments.",
         industry="Manufacturing",
@@ -55,8 +57,8 @@ def test_create_get_and_list_persist_scenario(
 
     assert created == scenario
     assert created is not scenario
-    assert repository.get(scenario.scenario_id) == scenario
-    assert repository.list() == [scenario]
+    assert repository.get_for_user(scenario.scenario_id, TEST_USER_ID) == scenario
+    assert repository.list_for_user(TEST_USER_ID) == [scenario]
 
 
 def test_get_returns_none_for_missing_scenario(
@@ -64,7 +66,7 @@ def test_get_returns_none_for_missing_scenario(
 ) -> None:
     repository = SQLScenarioRepository(database_session_factory)
 
-    assert repository.get(uuid4()) is None
+    assert repository.get_for_user(uuid4(), TEST_USER_ID) is None
 
 
 def test_duplicate_scenario_id_raises_and_rolls_back(
@@ -77,4 +79,4 @@ def test_duplicate_scenario_id_raises_and_rolls_back(
     with pytest.raises(IntegrityError):
         repository.create(scenario)
 
-    assert repository.get(scenario.scenario_id) == scenario
+    assert repository.get_for_user(scenario.scenario_id, TEST_USER_ID) == scenario

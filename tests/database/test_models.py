@@ -75,8 +75,12 @@ def test_primary_keys_match_domain_identifiers() -> None:
 
 def test_foreign_keys_reference_expected_parent_tables() -> None:
     expected_foreign_keys = {
+        "scenarios": {
+            ("user_id", "users.id"),
+        },
         "negotiation_sessions": {
             ("scenario_id", "scenarios.scenario_id"),
+            ("user_id", "users.id"),
         },
         "negotiation_turns": {
             ("session_id", "negotiation_sessions.id"),
@@ -95,6 +99,7 @@ def test_foreign_keys_reference_expected_parent_tables() -> None:
         },
         "negotiator_memories": {
             ("trigger_session_id", "negotiation_sessions.id"),
+            ("user_id", "users.id"),
         },
         "negotiator_memory_sources": {
             ("memory_id", "negotiator_memories.id"),
@@ -221,6 +226,11 @@ def test_memory_trigger_nullability_and_indexes_support_repository_queries() -> 
         for index in memory_table.indexes
     } == {
         "ix_negotiator_memories_created_at_id": ("created_at", "id"),
+        "ix_negotiator_memories_user_id_created_at_id": (
+            "user_id",
+            "created_at",
+            "id",
+        ),
     }
 
     turn_table = Base.metadata.tables["negotiation_turns"]

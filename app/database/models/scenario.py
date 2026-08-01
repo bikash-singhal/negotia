@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, Text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -16,11 +16,26 @@ class ScenarioModel(Base):
             "difficulty IN ('beginner', 'intermediate', 'advanced')",
             name="ck_scenarios_difficulty",
         ),
+        Index(
+            "ix_scenarios_user_id_created_at_scenario_id",
+            "user_id",
+            "created_at",
+            "scenario_id",
+        ),
     )
 
     scenario_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         primary_key=True,
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey(
+            "users.id",
+            name="fk_scenarios_user_id_users",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)

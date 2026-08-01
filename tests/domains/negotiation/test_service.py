@@ -15,11 +15,13 @@ from app.domains.negotiation.schemas import NegotiationSessionCreate
 from app.domains.negotiation.service import NegotiationService
 from app.domains.scenario.models import Scenario, ScenarioDifficulty
 from app.domains.scenario.repository import ScenarioRepository
+from tests.ownership import TEST_USER_ID
 
 
 def _create_stored_scenario(repository: ScenarioRepository) -> Scenario:
     return repository.create(
         Scenario(
+            user_id=TEST_USER_ID,
             title="Supplier contract renewal",
             description="Renegotiate the annual supplier contract and delivery terms.",
             industry="Manufacturing",
@@ -38,6 +40,7 @@ def _create_session(
     now = datetime.now(UTC)
     return NegotiationSession(
         id=uuid4(),
+        user_id=TEST_USER_ID,
         scenario_id=uuid4(),
         status=status,
         created_at=now,
@@ -52,13 +55,13 @@ def test_create_session_when_scenario_exists() -> None:
     service = NegotiationService(negotiation_repository, scenario_repository)
 
     session = service.create_session(
-        NegotiationSessionCreate(scenario_id=scenario.scenario_id)
+        NegotiationSessionCreate(scenario_id=scenario.scenario_id), TEST_USER_ID
     )
 
     assert isinstance(session.id, UUID)
     assert session.scenario_id == scenario.scenario_id
     assert session.status is NegotiationStatus.CREATED
-    assert negotiation_repository.get(session.id) is session
+    assert negotiation_repository.get_for_user(session.id, TEST_USER_ID) is session
     assert session.created_at.tzinfo is not None
     assert session.created_at.utcoffset() == timedelta(0)
     assert session.updated_at.tzinfo is not None
@@ -74,19 +77,21 @@ def test_missing_scenario_raises_and_does_not_store_session() -> None:
         wraps=stored_sessions,
     )
     scenario_repository = MagicMock(spec=ScenarioRepository)
-    scenario_repository.get.return_value = None
+    scenario_repository.get_for_user.return_value = None
     service = NegotiationService(
         negotiation_repository,
         scenario_repository,
     )
 
     with pytest.raises(ScenarioNotFoundError) as exc_info:
-        service.create_session(NegotiationSessionCreate(scenario_id=scenario_id))
+        service.create_session(
+            NegotiationSessionCreate(scenario_id=scenario_id), TEST_USER_ID
+        )
 
     assert exc_info.value.scenario_id == scenario_id
     assert str(exc_info.value) == f"Scenario with id '{scenario_id}' was not found."
-    assert stored_sessions.list() == []
-    scenario_repository.get.assert_called_once_with(scenario_id)
+    assert stored_sessions.list_for_user(TEST_USER_ID) == []
+    scenario_repository.get_for_user.assert_called_once_with(scenario_id, TEST_USER_ID)
     negotiation_repository.create.assert_not_called()
 
 
@@ -107,9 +112,11 @@ def test_create_session_calls_repositories() -> None:
     )
 
     request = NegotiationSessionCreate(scenario_id=scenario.scenario_id)
-    session = service.create_session(request)
+    session = service.create_session(request, TEST_USER_ID)
 
-    scenario_repository.get.assert_called_once_with(request.scenario_id)
+    scenario_repository.get_for_user.assert_called_once_with(
+        request.scenario_id, TEST_USER_ID
+    )
     negotiation_repository.create.assert_called_once_with(session)
 
 
@@ -118,12 +125,14 @@ def test_get_session_delegates_to_negotiation_repository() -> None:
     scenario_repository = MagicMock(spec=ScenarioRepository)
     service = NegotiationService(negotiation_repository, scenario_repository)
     session = _create_session()
-    negotiation_repository.get.return_value = session
+    negotiation_repository.get_for_user.return_value = session
 
-    result = service.get_session(session.id)
+    result = service.get_session(session.id, TEST_USER_ID)
 
     assert result is session
-    negotiation_repository.get.assert_called_once_with(session.id)
+    negotiation_repository.get_for_user.assert_called_once_with(
+        session.id, TEST_USER_ID
+    )
 
 
 def test_list_sessions_delegates_to_negotiation_repository() -> None:
@@ -131,12 +140,12 @@ def test_list_sessions_delegates_to_negotiation_repository() -> None:
     scenario_repository = MagicMock(spec=ScenarioRepository)
     service = NegotiationService(negotiation_repository, scenario_repository)
     sessions = [_create_session(), _create_session()]
-    negotiation_repository.list.return_value = sessions
+    negotiation_repository.list_for_user.return_value = sessions
 
-    result = service.list_sessions()
+    result = service.list_sessions(TEST_USER_ID)
 
     assert result == sessions
-    negotiation_repository.list.assert_called_once_with()
+    negotiation_repository.list_for_user.assert_called_once_with(TEST_USER_ID)
 
 
 @pytest.mark.parametrize(
@@ -156,14 +165,14 @@ def test_mark_completed_persists_valid_transition(
         MagicMock(spec=ScenarioRepository),
     )
 
-    result = service.mark_completed(session.id)
+    result = service.mark_completed(session.id, TEST_USER_ID)
 
     assert result is session
     assert result.status is NegotiationStatus.COMPLETED
     assert result.updated_at > original_updated_at
     assert result.updated_at.tzinfo is not None
     assert result.updated_at.utcoffset() == timedelta(0)
-    assert negotiation_repository.get(session.id) is result
+    assert negotiation_repository.get_for_user(session.id, TEST_USER_ID) is result
 
 
 def test_mark_completed_is_idempotent_without_updating_timestamp() -> None:
@@ -176,7 +185,7 @@ def test_mark_completed_is_idempotent_without_updating_timestamp() -> None:
         MagicMock(spec=ScenarioRepository),
     )
 
-    result = service.mark_completed(session.id)
+    result = service.mark_completed(session.id, TEST_USER_ID)
 
     assert result is session
     assert result.updated_at is original_updated_at
@@ -193,7 +202,7 @@ def test_mark_completed_rejects_abandoned_session() -> None:
     )
 
     with pytest.raises(InvalidNegotiationStatusTransitionError) as exc_info:
-        service.mark_completed(session.id)
+        service.mark_completed(session.id, TEST_USER_ID)
 
     assert exc_info.value.session_id == session.id
     assert exc_info.value.current_status is NegotiationStatus.ABANDONED

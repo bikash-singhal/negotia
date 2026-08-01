@@ -14,6 +14,7 @@ class NegotiationStatus(StrEnum):
 @dataclass
 class NegotiationSession:
     id: UUID
+    user_id: UUID
     scenario_id: UUID
     status: NegotiationStatus
     created_at: datetime

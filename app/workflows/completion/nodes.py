@@ -58,9 +58,13 @@ class CompletionWorkflowNodes:
         state: CompletionWorkflowState,
     ) -> CompletionWorkflowUpdate:
         session_id = state["session_id"]
-        session = self._negotiation_service.validate_completion_transition(session_id)
+        user_id = state["user_id"]
+        session = self._negotiation_service.validate_completion_transition(
+            session_id,
+            user_id,
+        )
         if session.status is not NegotiationStatus.COMPLETED:
-            turns = self._negotiation_turn_service.list_turns(session_id)
+            turns = self._negotiation_turn_service.list_turns(session_id, user_id)
             self._validate_completion_turns(session_id, turns)
 
         log_event(
@@ -82,12 +86,13 @@ class CompletionWorkflowNodes:
         started_at = perf_counter()
         session = self._get_session(state)
         self._log_artifact_preparation_started(session.id, "debrief")
-        record = self._debrief_service.get_for_session(session.id)
+        user_id = state["user_id"]
+        record = self._debrief_service.get_for_session(session.id, user_id)
         prepared = False
         if record is None:
             if session.status is NegotiationStatus.COMPLETED:
                 raise CompletedNegotiationMissingDebriefError(session.id)
-            record = self._debrief_service.prepare_for_session(session.id)
+            record = self._debrief_service.prepare_for_session(session.id, user_id)
             prepared = True
 
         self._log_artifact_preparation_completed(
@@ -106,13 +111,15 @@ class CompletionWorkflowNodes:
         session = self._get_session(state)
         self._log_artifact_preparation_started(session.id, "strategy")
         debrief_record = self._get_debrief_record(state)
-        record = self._strategy_service.get_for_session(session.id)
+        user_id = state["user_id"]
+        record = self._strategy_service.get_for_session(session.id, user_id)
         prepared = False
         if record is None:
             if session.status is NegotiationStatus.COMPLETED:
                 raise CompletedNegotiationMissingStrategyError(session.id)
             record = self._strategy_service.prepare_for_session(
                 session.id,
+                user_id,
                 debrief_record,
             )
             prepared = True
@@ -132,11 +139,13 @@ class CompletionWorkflowNodes:
         started_at = perf_counter()
         session = self._get_session(state)
         self._log_artifact_preparation_started(session.id, "memory")
-        record = self._memory_service.get_by_trigger_session(session.id)
+        user_id = state["user_id"]
+        record = self._memory_service.get_by_trigger_session(session.id, user_id)
         prepared = False
         if record is None and session.status is not NegotiationStatus.COMPLETED:
             record = self._memory_service.prepare_for_session(
                 session.id,
+                user_id,
                 self._get_debrief_record(state),
                 self._get_strategy_record(state),
             )
@@ -155,6 +164,7 @@ class CompletionWorkflowNodes:
         state: CompletionWorkflowState,
     ) -> CompletionWorkflowUpdate:
         session_id = self._get_session(state).id
+        user_id = state["user_id"]
         started_at = perf_counter()
         committed = False
         log_event(
@@ -167,18 +177,28 @@ class CompletionWorkflowNodes:
         )
         try:
             with self._unit_of_work_factory() as unit_of_work:
-                session = unit_of_work.negotiation_repository.get_for_update(session_id)
+                session = unit_of_work.negotiation_repository.get_for_update_for_user(
+                    session_id,
+                    user_id,
+                )
                 if session is None:
                     raise NegotiationSessionNotFoundError(session_id)
 
-                debrief_record = unit_of_work.debrief_repository.get_by_session(
-                    session_id
+                debrief_record = (
+                    unit_of_work.debrief_repository.get_by_session_for_user(
+                        session_id,
+                        user_id,
+                    )
                 )
-                strategy_record = unit_of_work.strategy_repository.get_by_session(
-                    session_id
+                strategy_record = (
+                    unit_of_work.strategy_repository.get_by_session_for_user(
+                        session_id,
+                        user_id,
+                    )
                 )
                 memory_record = unit_of_work.memory_repository.get_by_trigger_session(
-                    session_id
+                    session_id,
+                    user_id,
                 )
 
                 if session.status is NegotiationStatus.COMPLETED:
@@ -212,7 +232,8 @@ class CompletionWorkflowNodes:
                 self._validate_debrief_lineage(session_id, prepared_debrief)
                 if debrief_record is None:
                     debrief_record = unit_of_work.debrief_repository.create(
-                        prepared_debrief
+                        prepared_debrief,
+                        user_id,
                     )
 
                 prepared_strategy = self._get_strategy_record(state)
@@ -229,7 +250,8 @@ class CompletionWorkflowNodes:
                         prepared_strategy,
                     )
                     strategy_record = unit_of_work.strategy_repository.create(
-                        prepared_strategy
+                        prepared_strategy,
+                        user_id,
                     )
                 else:
                     self._validate_strategy_lineage(
@@ -240,13 +262,20 @@ class CompletionWorkflowNodes:
 
                 prepared_memory = state.get("memory_record")
                 if memory_record is None and prepared_memory is not None:
-                    self._validate_memory_lineage(session_id, prepared_memory)
+                    self._validate_memory_lineage(
+                        session_id,
+                        user_id,
+                        prepared_memory,
+                    )
                     memory_record = unit_of_work.memory_repository.create(
                         prepared_memory
                     )
 
                 self._negotiation_service.prepare_completion(session)
-                session = unit_of_work.negotiation_repository.update(session)
+                session = unit_of_work.negotiation_repository.update_for_user(
+                    session,
+                    user_id,
+                )
                 unit_of_work.commit()
                 committed = True
         except Exception:
@@ -351,10 +380,12 @@ class CompletionWorkflowNodes:
     @staticmethod
     def _validate_memory_lineage(
         session_id: UUID,
+        user_id: UUID,
         record: NegotiatorMemoryRecord,
     ) -> None:
         if (
             record.trigger_session_id != session_id
+            or record.user_id != user_id
             or session_id not in record.source_session_ids
         ):
             raise CompletionArtifactsChangedError(session_id)

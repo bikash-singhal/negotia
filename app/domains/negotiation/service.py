@@ -26,14 +26,16 @@ class NegotiationService:
     def create_session(
         self,
         request: NegotiationSessionCreate,
+        user_id: UUID,
     ) -> NegotiationSession:
-        scenario = self._scenario_repository.get(request.scenario_id)
+        scenario = self._scenario_repository.get_for_user(request.scenario_id, user_id)
         if scenario is None:
             raise ScenarioNotFoundError(request.scenario_id)
 
         now = datetime.now(UTC)
         session = NegotiationSession(
             id=uuid4(),
+            user_id=user_id,
             scenario_id=request.scenario_id,
             status=NegotiationStatus.CREATED,
             created_at=now,
@@ -42,17 +44,22 @@ class NegotiationService:
 
         return self._negotiation_repository.create(session)
 
-    def get_session(self, session_id: UUID) -> NegotiationSession | None:
-        return self._negotiation_repository.get(session_id)
+    def get_session(
+        self,
+        session_id: UUID,
+        user_id: UUID,
+    ) -> NegotiationSession | None:
+        return self._negotiation_repository.get_for_user(session_id, user_id)
 
-    def list_sessions(self) -> list[NegotiationSession]:
-        return self._negotiation_repository.list()
+    def list_sessions(self, user_id: UUID) -> list[NegotiationSession]:
+        return self._negotiation_repository.list_for_user(user_id)
 
     def validate_completion_transition(
         self,
         session_id: UUID,
+        user_id: UUID,
     ) -> NegotiationSession:
-        session = self._negotiation_repository.get(session_id)
+        session = self._negotiation_repository.get_for_user(session_id, user_id)
         if session is None:
             raise NegotiationSessionNotFoundError(session_id)
 
@@ -69,13 +76,13 @@ class NegotiationService:
 
         return session
 
-    def mark_completed(self, session_id: UUID) -> NegotiationSession:
-        session = self.validate_completion_transition(session_id)
+    def mark_completed(self, session_id: UUID, user_id: UUID) -> NegotiationSession:
+        session = self.validate_completion_transition(session_id, user_id)
         if session.status is NegotiationStatus.COMPLETED:
             return session
 
         self.prepare_completion(session)
-        return self._negotiation_repository.update(session)
+        return self._negotiation_repository.update_for_user(session, user_id)
 
     def prepare_completion(
         self,

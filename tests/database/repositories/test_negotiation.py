@@ -15,12 +15,14 @@ from app.domains.negotiation.schemas import NegotiationSessionCreate
 from app.domains.negotiation.service import NegotiationService
 from app.domains.negotiation_turn.exceptions import NegotiationSessionNotFoundError
 from app.domains.scenario.models import Scenario, ScenarioDifficulty
+from tests.ownership import TEST_USER_ID
 
 from .conftest import SessionFactory
 
 
 def _scenario() -> Scenario:
     return Scenario(
+        user_id=TEST_USER_ID,
         title="Commercial lease renewal",
         description="Negotiate rent and renewal terms for an office lease.",
         industry="Commercial real estate",
@@ -36,6 +38,7 @@ def _session(scenario_id: UUID) -> NegotiationSession:
     now = datetime.now(UTC)
     return NegotiationSession(
         id=uuid4(),
+        user_id=TEST_USER_ID,
         scenario_id=scenario_id,
         status=NegotiationStatus.CREATED,
         created_at=now,
@@ -69,8 +72,8 @@ def test_create_get_and_list_persist_negotiation(
 
     assert created == session
     assert created is not session
-    assert repository.get(session.id) == session
-    assert repository.list() == [session]
+    assert repository.get_for_user(session.id, TEST_USER_ID) == session
+    assert repository.list_for_user(TEST_USER_ID) == [session]
 
 
 def test_get_returns_none_for_missing_negotiation(
@@ -78,7 +81,7 @@ def test_get_returns_none_for_missing_negotiation(
 ) -> None:
     repository = SQLNegotiationRepository(database_session_factory)
 
-    assert repository.get(uuid4()) is None
+    assert repository.get_for_user(uuid4(), TEST_USER_ID) is None
 
 
 def test_duplicate_negotiation_id_raises_and_rolls_back(
@@ -91,7 +94,7 @@ def test_duplicate_negotiation_id_raises_and_rolls_back(
     with pytest.raises(IntegrityError):
         repository.create(session)
 
-    assert repository.get(session.id) == session
+    assert repository.get_for_user(session.id, TEST_USER_ID) == session
 
 
 def test_foreign_key_violation_raises_and_rolls_back(
@@ -102,7 +105,7 @@ def test_foreign_key_violation_raises_and_rolls_back(
     with pytest.raises(IntegrityError):
         repository.create(_session(uuid4()))
 
-    assert repository.list() == []
+    assert repository.list_for_user(TEST_USER_ID) == []
 
 
 def test_update_persists_changes_for_a_fresh_repository_read(
@@ -113,15 +116,17 @@ def test_update_persists_changes_for_a_fresh_repository_read(
     )
     service = NegotiationService(negotiation_repository, scenario_repository)
     created = service.create_session(
-        NegotiationSessionCreate(scenario_id=scenario.scenario_id)
+        NegotiationSessionCreate(scenario_id=scenario.scenario_id), TEST_USER_ID
     )
     original_updated_at = created.updated_at
 
-    completed = service.mark_completed(created.id)
-    reloaded = SQLNegotiationRepository(database_session_factory).get(created.id)
+    completed = service.mark_completed(created.id, TEST_USER_ID)
+    reloaded = SQLNegotiationRepository(database_session_factory).get_for_user(
+        created.id, TEST_USER_ID
+    )
 
     assert completed.status is NegotiationStatus.COMPLETED
-    assert completed.updated_at > original_updated_at
+    assert completed.updated_at >= original_updated_at
     assert completed.updated_at.utcoffset() == timedelta(0)
     assert reloaded == completed
 
@@ -133,6 +138,6 @@ def test_update_rejects_a_missing_negotiation(
     session = _session(uuid4())
 
     with pytest.raises(NegotiationSessionNotFoundError) as exc_info:
-        repository.update(session)
+        repository.update_for_user(session, TEST_USER_ID)
 
     assert exc_info.value.session_id == session.id

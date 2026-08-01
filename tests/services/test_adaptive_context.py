@@ -1,21 +1,24 @@
 from datetime import UTC, datetime
 from inspect import signature
 from unittest.mock import MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from app.domains.adaptive_context.models import AdaptiveContext
 from app.domains.memory.models import NegotiatorMemory, NegotiatorMemoryRecord
 from app.services.adaptive_context import AdaptiveContextService
 from app.services.memory import MemoryService
 from app.services.negotiation_engine import NegotiationEngine
+from tests.ownership import OTHER_USER_ID, TEST_USER_ID
 
 
 def _create_memory_record(
     *,
     focus_area: str = "Diagnostic questioning",
+    user_id: UUID = TEST_USER_ID,
 ) -> NegotiatorMemoryRecord:
     return NegotiatorMemoryRecord(
         id=uuid4(),
+        user_id=user_id,
         trigger_session_id=uuid4(),
         memory=NegotiatorMemory(
             recurring_strengths=["Uses conditional concessions."],
@@ -37,10 +40,10 @@ def test_get_context_returns_none_when_memory_is_absent() -> None:
     memory_service.get_latest.return_value = None
     service = AdaptiveContextService(memory_service)
 
-    result = service.get_context()
+    result = service.get_context(TEST_USER_ID)
 
     assert result is None
-    memory_service.get_latest.assert_called_once_with()
+    memory_service.get_latest.assert_called_once_with(TEST_USER_ID)
 
 
 def test_get_context_projects_only_confirmed_memory_fields() -> None:
@@ -49,7 +52,7 @@ def test_get_context_projects_only_confirmed_memory_fields() -> None:
     memory_service.get_latest.return_value = record
     service = AdaptiveContextService(memory_service)
 
-    result = service.get_context()
+    result = service.get_context(TEST_USER_ID)
 
     assert result == AdaptiveContext(
         focus_areas=["Diagnostic questioning"],
@@ -67,7 +70,7 @@ def test_projection_defensively_copies_every_list() -> None:
     memory_service.get_latest.return_value = record
     service = AdaptiveContextService(memory_service)
 
-    result = service.get_context()
+    result = service.get_context(TEST_USER_ID)
 
     assert result is not None
     assert result.focus_areas is not record.memory.priority_focus_areas
@@ -84,8 +87,8 @@ def test_mapping_is_deterministic_without_caching() -> None:
     memory_service.get_latest.return_value = record
     service = AdaptiveContextService(memory_service)
 
-    first = service.get_context()
-    second = service.get_context()
+    first = service.get_context(TEST_USER_ID)
+    second = service.get_context(TEST_USER_ID)
 
     assert first == second
     assert first is not second
@@ -102,13 +105,40 @@ def test_each_call_reflects_latest_persisted_memory() -> None:
     memory_service.get_latest.side_effect = [first_record, second_record]
     service = AdaptiveContextService(memory_service)
 
-    first = service.get_context()
-    second = service.get_context()
+    first = service.get_context(TEST_USER_ID)
+    second = service.get_context(TEST_USER_ID)
 
     assert first is not None
     assert second is not None
     assert first.focus_areas == ["Diagnostic questioning"]
     assert second.focus_areas == ["Concession planning"]
+
+
+def test_context_lookup_never_uses_another_users_memory() -> None:
+    owner_record = _create_memory_record(focus_area="Owner focus")
+    other_record = _create_memory_record(
+        focus_area="Other focus",
+        user_id=OTHER_USER_ID,
+    )
+    records = {
+        TEST_USER_ID: owner_record,
+        OTHER_USER_ID: other_record,
+    }
+    memory_service = MagicMock(spec=MemoryService)
+    memory_service.get_latest.side_effect = records.get
+    service = AdaptiveContextService(memory_service)
+
+    owner_context = service.get_context(TEST_USER_ID)
+    other_context = service.get_context(OTHER_USER_ID)
+
+    assert owner_context is not None
+    assert other_context is not None
+    assert owner_context.focus_areas == ["Owner focus"]
+    assert other_context.focus_areas == ["Other focus"]
+    assert [entry.args for entry in memory_service.get_latest.call_args_list] == [
+        (TEST_USER_ID,),
+        (OTHER_USER_ID,),
+    ]
 
 
 def test_service_has_only_memory_service_dependency() -> None:

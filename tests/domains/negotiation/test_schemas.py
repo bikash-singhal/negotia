@@ -9,12 +9,14 @@ from app.domains.negotiation.schemas import (
     NegotiationSessionCreate,
     NegotiationSessionResponse,
 )
+from tests.ownership import TEST_USER_ID
 
 
 def _create_session() -> NegotiationSession:
     now = datetime.now(UTC)
     return NegotiationSession(
         id=uuid4(),
+        user_id=TEST_USER_ID,
         scenario_id=uuid4(),
         status=NegotiationStatus.CREATED,
         created_at=now,

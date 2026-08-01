@@ -9,6 +9,7 @@ from app.database.models.memory import (
     NegotiatorMemoryModel,
     NegotiatorMemorySourceModel,
 )
+from app.database.models.negotiation import NegotiationSessionModel
 from app.database.repositories._session import (
     RepositorySessionManager,
     SessionFactory,
@@ -16,6 +17,7 @@ from app.database.repositories._session import (
 from app.domains.memory.exceptions import NegotiatorMemoryAlreadyExistsError
 from app.domains.memory.models import NegotiatorMemory, NegotiatorMemoryRecord
 from app.domains.memory.repository import NegotiatorMemoryRepository
+from app.domains.negotiation_turn.exceptions import NegotiationSessionNotFoundError
 
 
 def _require_string_list(value: object, field_name: str) -> list[str]:
@@ -31,6 +33,7 @@ def negotiator_memory_to_model(
 ) -> NegotiatorMemoryModel:
     return NegotiatorMemoryModel(
         id=record.id,
+        user_id=record.user_id,
         trigger_session_id=record.trigger_session_id,
         recurring_strengths=list(record.memory.recurring_strengths),
         recurring_weaknesses=list(record.memory.recurring_weaknesses),
@@ -72,6 +75,7 @@ def negotiator_memory_to_domain(
 
     return NegotiatorMemoryRecord(
         id=model.id,
+        user_id=model.user_id,
         trigger_session_id=model.trigger_session_id,
         memory=NegotiatorMemory(
             recurring_strengths=_require_string_list(
@@ -124,12 +128,18 @@ class SQLNegotiatorMemoryRepository(NegotiatorMemoryRepository):
     ) -> NegotiatorMemoryRecord:
         with self._session_manager.session_scope() as database_session:
             try:
+                if not self._sessions_belong_to_user(database_session, record):
+                    missing_session_id = record.trigger_session_id or next(
+                        iter(record.source_session_ids), UUID(int=0)
+                    )
+                    raise NegotiationSessionNotFoundError(missing_session_id)
                 trigger_session_id = record.trigger_session_id
                 if trigger_session_id is not None:
                     duplicate_id = database_session.scalar(
                         select(NegotiatorMemoryModel.id).where(
                             NegotiatorMemoryModel.trigger_session_id
-                            == trigger_session_id
+                            == trigger_session_id,
+                            NegotiatorMemoryModel.user_id == record.user_id,
                         )
                     )
                     if duplicate_id is not None:
@@ -150,10 +160,11 @@ class SQLNegotiatorMemoryRepository(NegotiatorMemoryRepository):
 
             return negotiator_memory_to_domain(model, source_models)
 
-    def get_latest(self) -> NegotiatorMemoryRecord | None:
+    def get_latest(self, user_id: UUID) -> NegotiatorMemoryRecord | None:
         with self._session_manager.session_scope() as database_session:
             model = database_session.scalar(
                 select(NegotiatorMemoryModel)
+                .where(NegotiatorMemoryModel.user_id == user_id)
                 .order_by(
                     NegotiatorMemoryModel.created_at.desc(),
                     NegotiatorMemoryModel.id.desc(),
@@ -164,10 +175,12 @@ class SQLNegotiatorMemoryRepository(NegotiatorMemoryRepository):
                 return None
             return self._to_domain(database_session, model)
 
-    def list_all(self) -> list[NegotiatorMemoryRecord]:
+    def list_for_user(self, user_id: UUID) -> list[NegotiatorMemoryRecord]:
         with self._session_manager.session_scope() as database_session:
             models = database_session.scalars(
-                select(NegotiatorMemoryModel).order_by(
+                select(NegotiatorMemoryModel)
+                .where(NegotiatorMemoryModel.user_id == user_id)
+                .order_by(
                     NegotiatorMemoryModel.created_at,
                     NegotiatorMemoryModel.id,
                 )
@@ -177,11 +190,13 @@ class SQLNegotiatorMemoryRepository(NegotiatorMemoryRepository):
     def get_by_trigger_session(
         self,
         session_id: UUID,
+        user_id: UUID,
     ) -> NegotiatorMemoryRecord | None:
         with self._session_manager.session_scope() as database_session:
             model = database_session.scalar(
                 select(NegotiatorMemoryModel).where(
-                    NegotiatorMemoryModel.trigger_session_id == session_id
+                    NegotiatorMemoryModel.trigger_session_id == session_id,
+                    NegotiatorMemoryModel.user_id == user_id,
                 )
             )
             if model is None:
@@ -199,3 +214,24 @@ class SQLNegotiatorMemoryRepository(NegotiatorMemoryRepository):
             .order_by(NegotiatorMemorySourceModel.source_order)
         ).all()
         return negotiator_memory_to_domain(model, source_models)
+
+    @staticmethod
+    def _sessions_belong_to_user(
+        database_session: Session,
+        record: NegotiatorMemoryRecord,
+    ) -> bool:
+        session_ids = set(record.source_session_ids)
+        if record.trigger_session_id is not None:
+            session_ids.add(record.trigger_session_id)
+        if not session_ids:
+            return True
+
+        owned_session_ids = set(
+            database_session.scalars(
+                select(NegotiationSessionModel.id).where(
+                    NegotiationSessionModel.id.in_(session_ids),
+                    NegotiationSessionModel.user_id == record.user_id,
+                )
+            ).all()
+        )
+        return owned_session_ids == session_ids

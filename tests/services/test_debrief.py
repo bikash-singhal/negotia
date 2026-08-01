@@ -24,6 +24,7 @@ from app.llm.fake import FakeLLMProvider
 from app.llm.provider import LLMProvider
 from app.prompts.debrief import DebriefPromptBuilder
 from app.services.debrief import DebriefExtractor, DebriefService
+from tests.ownership import TEST_USER_ID
 
 
 def _create_observation_record(
@@ -197,19 +198,19 @@ def test_service_loads_all_observations_in_order_and_persists_record() -> None:
     first = _create_observation_record(session_id, 1)
     second = _create_observation_record(session_id, 2)
     coach_repository = MagicMock(spec=CoachObservationRepository)
-    coach_repository.list_by_session.return_value = [first, second]
+    coach_repository.list_by_session_for_user.return_value = [first, second]
     extractor = MagicMock(spec=DebriefExtractor)
     debrief = _valid_debrief()
     extractor.extract.return_value = debrief
     debrief_repository = MagicMock(spec=NegotiationDebriefRepository)
-    debrief_repository.create.side_effect = lambda record: record
+    debrief_repository.create.side_effect = lambda record, user_id: record
     service = DebriefService(
         coach_repository,
         extractor,
         debrief_repository,
     )
 
-    result = service.generate_for_session(session_id)
+    result = service.generate_for_session(session_id, TEST_USER_ID)
 
     assert isinstance(result, NegotiationDebriefRecord)
     assert isinstance(result.id, UUID)
@@ -218,23 +219,25 @@ def test_service_loads_all_observations_in_order_and_persists_record() -> None:
     assert result.observation_count == 2
     assert result.created_at.tzinfo is not None
     assert result.created_at.utcoffset() == timedelta(0)
-    coach_repository.list_by_session.assert_called_once_with(session_id)
+    coach_repository.list_by_session_for_user.assert_called_once_with(
+        session_id, TEST_USER_ID
+    )
     extractor.extract.assert_called_once_with([first, second])
-    debrief_repository.create.assert_called_once_with(result)
+    debrief_repository.create.assert_called_once_with(result, TEST_USER_ID)
 
 
 def test_service_prepares_debrief_without_persisting() -> None:
     session_id = uuid4()
     observations = [_create_observation_record(session_id, 1)]
     coach_repository = MagicMock(spec=CoachObservationRepository)
-    coach_repository.list_by_session.return_value = observations
+    coach_repository.list_by_session_for_user.return_value = observations
     extractor = MagicMock(spec=DebriefExtractor)
     debrief = _valid_debrief()
     extractor.extract.return_value = debrief
     debrief_repository = MagicMock(spec=NegotiationDebriefRepository)
     service = DebriefService(coach_repository, extractor, debrief_repository)
 
-    result = service.prepare_for_session(session_id)
+    result = service.prepare_for_session(session_id, TEST_USER_ID)
 
     assert result.session_id == session_id
     assert result.debrief is debrief
@@ -243,7 +246,7 @@ def test_service_prepares_debrief_without_persisting() -> None:
 
 def test_service_rejects_session_without_observations() -> None:
     coach_repository = MagicMock(spec=CoachObservationRepository)
-    coach_repository.list_by_session.return_value = []
+    coach_repository.list_by_session_for_user.return_value = []
     extractor = MagicMock(spec=DebriefExtractor)
     debrief_repository = MagicMock(spec=NegotiationDebriefRepository)
     service = DebriefService(
@@ -253,7 +256,7 @@ def test_service_rejects_session_without_observations() -> None:
     )
 
     with pytest.raises(NoCoachObservationsError):
-        service.generate_for_session(uuid4())
+        service.generate_for_session(uuid4(), TEST_USER_ID)
 
     extractor.extract.assert_not_called()
     debrief_repository.create.assert_not_called()
@@ -262,7 +265,7 @@ def test_service_rejects_session_without_observations() -> None:
 def test_service_does_not_persist_when_extraction_fails() -> None:
     session_id = uuid4()
     coach_repository = MagicMock(spec=CoachObservationRepository)
-    coach_repository.list_by_session.return_value = [
+    coach_repository.list_by_session_for_user.return_value = [
         _create_observation_record(session_id)
     ]
     extractor = MagicMock(spec=DebriefExtractor)
@@ -276,7 +279,7 @@ def test_service_does_not_persist_when_extraction_fails() -> None:
     )
 
     with pytest.raises(InvalidDebriefDataError) as exc_info:
-        service.generate_for_session(session_id)
+        service.generate_for_session(session_id, TEST_USER_ID)
 
     assert exc_info.value is expected_error
     debrief_repository.create.assert_not_called()
@@ -285,7 +288,7 @@ def test_service_does_not_persist_when_extraction_fails() -> None:
 def test_duplicate_generation_is_rejected_without_overwriting_original() -> None:
     session_id = uuid4()
     coach_repository = CoachObservationRepository()
-    coach_repository.create(_create_observation_record(session_id))
+    coach_repository.create(_create_observation_record(session_id), TEST_USER_ID)
     extractor = MagicMock(spec=DebriefExtractor)
     extractor.extract.return_value = _valid_debrief()
     debrief_repository = NegotiationDebriefRepository()
@@ -294,12 +297,14 @@ def test_duplicate_generation_is_rejected_without_overwriting_original() -> None
         extractor,
         debrief_repository,
     )
-    original = service.generate_for_session(session_id)
+    original = service.generate_for_session(session_id, TEST_USER_ID)
 
     with pytest.raises(NegotiationDebriefAlreadyExistsError):
-        service.generate_for_session(session_id)
+        service.generate_for_session(session_id, TEST_USER_ID)
 
-    assert debrief_repository.get_by_session(session_id) is original
+    assert (
+        debrief_repository.get_by_session_for_user(session_id, TEST_USER_ID) is original
+    )
 
 
 def test_service_has_no_turn_or_scenario_repository_dependency() -> None:
@@ -321,14 +326,16 @@ def test_get_for_session_delegates_to_debrief_repository() -> None:
         observation_count=1,
         created_at=datetime.now(UTC),
     )
-    debrief_repository.get_by_session.return_value = expected_record
+    debrief_repository.get_by_session_for_user.return_value = expected_record
     service = DebriefService(
         coach_repository,
         extractor,
         debrief_repository,
     )
 
-    result = service.get_for_session(session_id)
+    result = service.get_for_session(session_id, TEST_USER_ID)
 
     assert result is expected_record
-    debrief_repository.get_by_session.assert_called_once_with(session_id)
+    debrief_repository.get_by_session_for_user.assert_called_once_with(
+        session_id, TEST_USER_ID
+    )

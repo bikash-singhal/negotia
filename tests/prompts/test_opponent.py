@@ -10,12 +10,14 @@ from app.domains.negotiation_turn.models import (
 from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.models import Scenario, ScenarioDifficulty
 from app.prompts.opponent import OpponentPromptBuilder
+from tests.ownership import TEST_USER_ID
 
 
 def _create_scenario(
     difficulty: ScenarioDifficulty = ScenarioDifficulty.ADVANCED,
 ) -> Scenario:
     return Scenario(
+        user_id=TEST_USER_ID,
         title="Enterprise software renewal",
         description="Negotiate the renewal of a multi-year software agreement.",
         industry="Technology",

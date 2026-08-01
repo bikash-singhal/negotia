@@ -24,6 +24,7 @@ class Scenario:
     difficulty: ScenarioDifficulty
     personality: str
     negotiation_style: str
+    user_id: UUID
     scenario_id: UUID = field(default_factory=uuid4)
     constraints: list[str] = field(default_factory=list)
     hidden_context: list[str] = field(default_factory=list)

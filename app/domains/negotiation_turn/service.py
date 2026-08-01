@@ -19,11 +19,21 @@ class NegotiationTurnService:
         self._turn_repository = turn_repository
         self._negotiation_repository = negotiation_repository
 
-    def create_turn(self, request: NegotiationTurnCreate) -> NegotiationTurn:
-        if self._negotiation_repository.get(request.session_id) is None:
+    def create_turn(
+        self,
+        request: NegotiationTurnCreate,
+        user_id: UUID,
+    ) -> NegotiationTurn:
+        if (
+            self._negotiation_repository.get_for_user(request.session_id, user_id)
+            is None
+        ):
             raise NegotiationSessionNotFoundError(request.session_id)
 
-        existing_turns = self._turn_repository.list_by_session(request.session_id)
+        existing_turns = self._turn_repository.list_by_session_for_user(
+            request.session_id,
+            user_id,
+        )
         turn_number = existing_turns[-1].turn_number + 1 if existing_turns else 1
         turn = NegotiationTurn(
             id=uuid4(),
@@ -34,13 +44,17 @@ class NegotiationTurnService:
             created_at=datetime.now(UTC),
         )
 
-        return self._turn_repository.create(turn)
+        return self._turn_repository.create(turn, user_id)
 
-    def get_turn(self, turn_id: UUID) -> NegotiationTurn | None:
-        return self._turn_repository.get(turn_id)
+    def get_turn(self, turn_id: UUID, user_id: UUID) -> NegotiationTurn | None:
+        return self._turn_repository.get_for_user(turn_id, user_id)
 
-    def list_turns(self, session_id: UUID) -> list[NegotiationTurn]:
-        if self._negotiation_repository.get(session_id) is None:
+    def list_turns(
+        self,
+        session_id: UUID,
+        user_id: UUID,
+    ) -> list[NegotiationTurn]:
+        if self._negotiation_repository.get_for_user(session_id, user_id) is None:
             raise NegotiationSessionNotFoundError(session_id)
 
-        return self._turn_repository.list_by_session(session_id)
+        return self._turn_repository.list_by_session_for_user(session_id, user_id)
