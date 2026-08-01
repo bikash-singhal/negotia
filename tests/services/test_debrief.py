@@ -97,6 +97,7 @@ def test_valid_json_produces_debrief_and_passes_exact_prompts() -> None:
     provider.generate.assert_called_once_with(
         system_prompt="debrief system prompt",
         user_prompt="debrief user prompt",
+        temperature=0.0,
     )
 
 

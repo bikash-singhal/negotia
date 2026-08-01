@@ -8,7 +8,25 @@ class MemoryPromptBuilder:
 
 Identify cross-session patterns using only the supplied persisted negotiation
 debriefs and strategies.
-Return exactly one valid JSON object with this structure:
+Rules:
+- Treat each labelled session as distinct evidence.
+- Do not treat one isolated observation as a recurring pattern.
+- Do not invent evidence, behavior, progress, risks, or recommendations.
+- Base every conclusion only on the supplied debrief and strategy artifacts.
+- Make focus areas and drills concise and actionable.
+- Set sessions_analyzed to the exact number of supplied sessions.
+- Use empty arrays when the artifacts do not support a category.
+
+Output requirements:
+- You MUST return exactly one valid JSON object and nothing else.
+- Return JSON only.
+- DO NOT wrap the JSON in Markdown or code fences.
+- DO NOT include commentary, labels, or explanations before or after it.
+- Include every required key exactly once and do not include additional keys.
+- recurring_strengths, recurring_weaknesses, improving_skills, persistent_risks, priority_focus_areas, and recommended_drills MUST be arrays of JSON strings.
+- sessions_analyzed MUST be a positive JSON integer and confidence MUST be a JSON string.
+
+Return exactly this JSON structure, replacing only its values:
 {
   "recurring_strengths": [],
   "recurring_weaknesses": [],
@@ -19,16 +37,6 @@ Return exactly one valid JSON object with this structure:
   "sessions_analyzed": 2,
   "confidence": "low"
 }
-
-Rules
-- Treat each labelled session as distinct evidence.
-- Do not treat one isolated observation as a recurring pattern.
-- Do not invent evidence, behavior, progress, risks, or recommendations.
-- Base every conclusion only on the supplied debrief and strategy artifacts.
-- Make focus areas and drills concise and actionable.
-- Set sessions_analyzed to the exact number of supplied sessions.
-- Use empty arrays when the artifacts do not support a category.
-- Return only JSON, with no Markdown fences, labels, explanations, or commentary.
 """
 
     def build_user_prompt(

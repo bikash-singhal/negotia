@@ -1,9 +1,8 @@
-import json
 import logging
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict
 
 from app.domains.coach.models import CoachObservationRecord
 from app.domains.coach.repository import CoachObservationRepository
@@ -20,6 +19,7 @@ from app.domains.debrief.models import (
 from app.domains.debrief.repository import NegotiationDebriefRepository
 from app.llm.observability import generate_with_observability
 from app.llm.provider import LLMProvider
+from app.llm.structured_json import parse_structured_json
 from app.prompts.debrief import DebriefPromptBuilder
 
 logger = logging.getLogger(__name__)
@@ -52,26 +52,25 @@ class DebriefExtractor:
         if not observations:
             raise NoCoachObservationsError()
 
-        response = generate_with_observability(
+        raw_response = generate_with_observability(
             self._llm_provider,
             logger,
             "debrief_extraction",
             system_prompt=self._prompt_builder.build_system_prompt(),
             user_prompt=self._prompt_builder.build_user_prompt(observations),
             session_id=observations[0].session_id,
-        ).strip()
-        if not response:
-            raise EmptyDebriefResponseError()
-
-        try:
-            data = json.loads(response)
-        except json.JSONDecodeError:
-            raise InvalidDebriefJsonError() from None
-
-        try:
-            payload = _NegotiationDebriefPayload.model_validate(data)
-        except ValidationError:
-            raise InvalidDebriefDataError() from None
+            temperature=0.0,
+        )
+        payload = parse_structured_json(
+            raw_response,
+            _NegotiationDebriefPayload,
+            logger=logger,
+            operation="debrief_extraction",
+            session_id=observations[0].session_id,
+            empty_response_error=EmptyDebriefResponseError,
+            invalid_json_error=InvalidDebriefJsonError,
+            invalid_data_error=InvalidDebriefDataError,
+        )
 
         return NegotiationDebrief(
             repeated_strengths=payload.repeated_strengths,

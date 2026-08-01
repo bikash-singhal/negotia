@@ -12,32 +12,23 @@ class CoachPromptBuilder:
 You are analyzing the conversation.
 You are NOT participating in the negotiation.
 Evaluate only the user's negotiation behavior.
-Return exactly one valid JSON object with this structure:
-{
-  "strengths": [],
-  "weaknesses": [],
-  "missed_opportunities": [],
-  "risk_signals": [],
-  "confidence": "low"
-}
-
-Rules
+Rules:
 - Base every observation on evidence from the conversation.
 - Do not invent strengths, weaknesses, missed opportunities, or risk signals.
 - Use concise, factual descriptions.
 - Use empty arrays when the conversation provides no supported observations.
-- Return only JSON, with no Markdown fences, labels, explanations, or commentary.
 """
-        if adaptive_context is None:
-            return base_prompt
+        adaptive_section = ""
+        if adaptive_context is not None:
+            focus_areas = "\n".join(
+                f"- {item}" for item in adaptive_context.focus_areas
+            )
+            coaching_focus = "\n".join(
+                f"- {item}" for item in adaptive_context.coaching_focus
+            )
+            strengths = "\n".join(f"- {item}" for item in adaptive_context.strengths)
 
-        focus_areas = "\n".join(f"- {item}" for item in adaptive_context.focus_areas)
-        coaching_focus = "\n".join(
-            f"- {item}" for item in adaptive_context.coaching_focus
-        )
-        strengths = "\n".join(f"- {item}" for item in adaptive_context.strengths)
-
-        return f"""{base_prompt}
+            adaptive_section = f"""
 --- Historical coaching context ---
 
 Use this historical context only to guide your observational attention.
@@ -56,6 +47,26 @@ Recurring strengths
 {strengths}
 
 --- End historical coaching context ---
+"""
+
+        return f"""{base_prompt}{adaptive_section}
+Output requirements:
+- You MUST return exactly one valid JSON object and nothing else.
+- Return JSON only.
+- DO NOT wrap the JSON in Markdown or code fences.
+- DO NOT include commentary, labels, or explanations before or after it.
+- Include every required key exactly once and do not include additional keys.
+- strengths, weaknesses, missed_opportunities, and risk_signals MUST be arrays of JSON strings.
+- confidence MUST be a JSON string.
+
+Return exactly this JSON structure, replacing only its values:
+{{
+  "strengths": [],
+  "weaknesses": [],
+  "missed_opportunities": [],
+  "risk_signals": [],
+  "confidence": "low"
+}}
 """
 
     def build_user_prompt(self, turns: list[NegotiationTurn]) -> str:

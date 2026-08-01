@@ -1,4 +1,3 @@
-import json
 import logging
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -7,7 +6,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     PositiveInt,
-    ValidationError,
     model_validator,
 )
 
@@ -27,6 +25,7 @@ from app.domains.strategy.models import (
 from app.domains.strategy.repository import NegotiationStrategyRepository
 from app.llm.observability import generate_with_observability
 from app.llm.provider import LLMProvider
+from app.llm.structured_json import parse_structured_json
 from app.prompts.strategy import StrategyPromptBuilder
 
 logger = logging.getLogger(__name__)
@@ -75,26 +74,25 @@ class StrategyExtractor:
         self,
         debrief_record: NegotiationDebriefRecord,
     ) -> NegotiationStrategy:
-        response = generate_with_observability(
+        raw_response = generate_with_observability(
             self._llm_provider,
             logger,
             "strategy_extraction",
             system_prompt=self._prompt_builder.build_system_prompt(),
             user_prompt=self._prompt_builder.build_user_prompt(debrief_record),
             session_id=debrief_record.session_id,
-        ).strip()
-        if not response:
-            raise EmptyStrategyResponseError()
-
-        try:
-            data = json.loads(response)
-        except json.JSONDecodeError:
-            raise InvalidStrategyJsonError() from None
-
-        try:
-            payload = _NegotiationStrategyPayload.model_validate(data)
-        except ValidationError:
-            raise InvalidStrategyDataError() from None
+            temperature=0.0,
+        )
+        payload = parse_structured_json(
+            raw_response,
+            _NegotiationStrategyPayload,
+            logger=logger,
+            operation="strategy_extraction",
+            session_id=debrief_record.session_id,
+            empty_response_error=EmptyStrategyResponseError,
+            invalid_json_error=InvalidStrategyJsonError,
+            invalid_data_error=InvalidStrategyDataError,
+        )
 
         tactics = sorted(
             (

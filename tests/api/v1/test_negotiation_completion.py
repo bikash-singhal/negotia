@@ -612,6 +612,115 @@ def test_repeated_completion_is_idempotent(
     assert persisted_session.updated_at == _parse_datetime(first_body["completed_at"])
 
 
+def test_completion_recovers_from_prior_invalid_json_without_duplicate_artifacts(
+    client: TestClient,
+    completion_context: CompletionContext,
+) -> None:
+    historical_session = _create_completed_exchange(client)
+    historical_completion = client.post(
+        f"/api/v1/negotiations/{historical_session['id']}/complete"
+    )
+    assert historical_completion.status_code == 200
+
+    target_session = _create_completed_exchange(client)
+    target_session_id = _parse_uuid(target_session["id"])
+    completion_context.artifact_provider.generate.reset_mock()
+    completion_context.artifact_provider.generate.return_value = (
+        "Here is the debrief rather than raw JSON."
+    )
+
+    failed_response = client.post(
+        f"/api/v1/negotiations/{target_session['id']}/complete"
+    )
+
+    assert failed_response.status_code == 500
+    assert (
+        completion_context.debrief_repository.get_by_session(target_session_id) is None
+    )
+    assert (
+        completion_context.strategy_repository.get_by_session(target_session_id) is None
+    )
+    assert (
+        completion_context.memory_repository.get_by_trigger_session(target_session_id)
+        is None
+    )
+    incomplete_session = completion_context.negotiation_repository.get(
+        target_session_id
+    )
+    assert incomplete_session is not None
+    assert incomplete_session.status is NegotiationStatus.CREATED
+
+    fake_provider = FakeLLMProvider()
+    fenced_responses = [
+        "```json\n"
+        + fake_provider.generate(
+            DebriefPromptBuilder().build_system_prompt(),
+            "stored observations",
+        )
+        + "\n```",
+        "```json\n"
+        + fake_provider.generate(
+            StrategyPromptBuilder().build_system_prompt(),
+            "persisted debrief",
+        )
+        + "\n```",
+        "```json\n"
+        + fake_provider.generate(
+            MemoryPromptBuilder().build_system_prompt(),
+            "Persisted artifacts from 2 negotiation sessions",
+        )
+        + "\n```",
+    ]
+    completion_context.artifact_provider.generate.reset_mock()
+    completion_context.artifact_provider.generate.side_effect = fenced_responses
+
+    recovered_response = client.post(
+        f"/api/v1/negotiations/{target_session['id']}/complete"
+    )
+    recovered_body = recovered_response.json()
+
+    assert recovered_response.status_code == 200
+    assert completion_context.artifact_provider.generate.call_count == 3
+    debrief_record = completion_context.debrief_repository.get_by_session(
+        target_session_id
+    )
+    strategy_record = completion_context.strategy_repository.get_by_session(
+        target_session_id
+    )
+    memory_record = completion_context.memory_repository.get_by_trigger_session(
+        target_session_id
+    )
+    assert debrief_record is not None
+    assert strategy_record is not None
+    assert memory_record is not None
+    assert str(debrief_record.id) == recovered_body["debrief_id"]
+    assert str(strategy_record.id) == recovered_body["strategy_id"]
+    assert str(memory_record.id) == recovered_body["memory_id"]
+    assert (
+        sum(
+            record.session_id == target_session_id
+            for record in completion_context.strategy_repository.list_all()
+        )
+        == 1
+    )
+    assert (
+        sum(
+            record.trigger_session_id == target_session_id
+            for record in completion_context.memory_repository.list_all()
+        )
+        == 1
+    )
+
+    completion_context.artifact_provider.generate.reset_mock()
+    repeated_response = client.post(
+        f"/api/v1/negotiations/{target_session['id']}/complete"
+    )
+
+    assert repeated_response.status_code == 200
+    assert repeated_response.json() == recovered_body
+    completion_context.artifact_provider.generate.assert_not_called()
+
+
 def test_completion_reuses_existing_debrief_and_generates_missing_strategy(
     client: TestClient,
     completion_context: CompletionContext,
@@ -721,10 +830,16 @@ def test_memory_preparation_failure_persists_nothing_and_retry_regenerates(
     def fail_memory(
         system_prompt: str,
         user_prompt: str,
+        *,
+        temperature: float | None = None,
     ) -> str:
         if system_prompt.startswith("You are an expert negotiation memory analyst"):
             raise expected_error
-        return fake_provider.generate(system_prompt, user_prompt)
+        return fake_provider.generate(
+            system_prompt,
+            user_prompt,
+            temperature=temperature,
+        )
 
     completion_context.artifact_provider.generate.reset_mock()
     completion_context.artifact_provider.generate.side_effect = fail_memory

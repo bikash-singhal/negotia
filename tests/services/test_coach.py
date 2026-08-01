@@ -71,6 +71,7 @@ def test_valid_json_produces_coach_observation() -> None:
     provider.generate.assert_called_once_with(
         system_prompt="coach system prompt",
         user_prompt="coach user prompt",
+        temperature=0.0,
     )
 
 

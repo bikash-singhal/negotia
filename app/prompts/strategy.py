@@ -7,7 +7,26 @@ class StrategyPromptBuilder:
 
 Create prioritized, detailed, and actionable recommendations for what the user
 should do differently in a future negotiation.
-Return exactly one valid JSON object with this structure:
+Rules:
+- Rely only on the supplied persisted negotiation debrief.
+- Do not invent negotiation events, evidence, or user behavior.
+- Make every tactic actionable rather than merely descriptive.
+- Priorities must be positive, unique integers.
+- Provide concrete actions, example language, and a measurable success indicator.
+- Keep long-term skills more general and fewer than negotiation-specific tactics.
+- Make preparation and avoidance guidance concise and practical.
+
+Output requirements:
+- You MUST return exactly one valid JSON object and nothing else.
+- Return JSON only.
+- DO NOT wrap the JSON in Markdown or code fences.
+- DO NOT include commentary, labels, or explanations before or after it.
+- Include every required key exactly once and do not include additional keys.
+- primary_objective, expected_outcome, confidence, and each tactic's title, rationale, and success_indicator MUST be JSON strings.
+- prioritized_tactics MUST be an array of objects; each priority MUST be a positive integer and actions and example_language MUST be arrays of JSON strings.
+- long_term_skills, preparation_checklist, and avoid_next_time MUST be arrays of JSON strings.
+
+Return exactly this JSON structure, replacing only its values:
 {
   "primary_objective": "",
   "expected_outcome": "",
@@ -26,16 +45,6 @@ Return exactly one valid JSON object with this structure:
   "avoid_next_time": [],
   "confidence": "low"
 }
-
-Rules
-- Rely only on the supplied persisted negotiation debrief.
-- Do not invent negotiation events, evidence, or user behavior.
-- Make every tactic actionable rather than merely descriptive.
-- Priorities must be positive, unique integers.
-- Provide concrete actions, example language, and a measurable success indicator.
-- Keep long-term skills more general and fewer than negotiation-specific tactics.
-- Make preparation and avoidance guidance concise and practical.
-- Return only JSON, with no Markdown fences, labels, explanations, or commentary.
 """
 
     def build_user_prompt(

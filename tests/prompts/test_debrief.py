@@ -35,8 +35,10 @@ def test_system_prompt_requires_supported_recurring_json_only_analysis() -> None
     assert "Rely only on the supplied coach observations" in prompt
     assert "Do not invent facts" in prompt
     assert "Do not re-evaluate dialogue" in prompt
-    assert "Return only JSON" in prompt
-    assert "no Markdown fences" in prompt
+    assert "MUST return exactly one valid JSON object" in prompt
+    assert "DO NOT wrap the JSON in Markdown or code fences" in prompt
+    assert "do not include additional keys" in prompt
+    assert prompt.rstrip().endswith("}")
 
 
 def test_user_prompt_preserves_order_and_includes_all_observation_fields() -> None:

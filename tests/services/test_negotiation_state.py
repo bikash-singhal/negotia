@@ -185,7 +185,7 @@ def test_invalid_output_logs_only_safe_diagnostics(
     parse_record = next(
         record
         for record in caplog.records
-        if getattr(record, "event", None) == "negotiation_state_parse_failed"
+        if getattr(record, "event", None) == "structured_output_parse_failed"
     )
     assert getattr(parse_record, "output_length", None) == len(sensitive_output)
     assert getattr(parse_record, "fence_detected", None) is False

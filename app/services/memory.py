@@ -1,9 +1,6 @@
-import json
 import logging
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
-
-from pydantic import ValidationError
 
 from app.domains.debrief.models import NegotiationDebriefRecord
 from app.domains.debrief.repository import NegotiationDebriefRepository
@@ -24,6 +21,7 @@ from app.domains.strategy.models import NegotiationStrategyRecord
 from app.domains.strategy.repository import NegotiationStrategyRepository
 from app.llm.observability import generate_with_observability
 from app.llm.provider import LLMProvider
+from app.llm.structured_json import parse_structured_json
 from app.prompts.memory import MemoryPromptBuilder
 
 logger = logging.getLogger(__name__)
@@ -62,7 +60,7 @@ class MemoryExtractor:
             strategy_records,
             key=lambda record: str(record.session_id),
         )
-        response = generate_with_observability(
+        raw_response = generate_with_observability(
             self._llm_provider,
             logger,
             "memory_extraction",
@@ -71,19 +69,17 @@ class MemoryExtractor:
                 ordered_debriefs,
                 ordered_strategies,
             ),
-        ).strip()
-        if not response:
-            raise EmptyMemoryResponseError()
-
-        try:
-            data = json.loads(response)
-        except json.JSONDecodeError:
-            raise InvalidMemoryJsonError() from None
-
-        try:
-            memory = NegotiatorMemory.model_validate(data)
-        except ValidationError:
-            raise InvalidMemoryDataError() from None
+            temperature=0.0,
+        )
+        memory = parse_structured_json(
+            raw_response,
+            NegotiatorMemory,
+            logger=logger,
+            operation="memory_extraction",
+            empty_response_error=EmptyMemoryResponseError,
+            invalid_json_error=InvalidMemoryJsonError,
+            invalid_data_error=InvalidMemoryDataError,
+        )
 
         session_count = len(debrief_session_ids)
         if memory.sessions_analyzed != session_count:

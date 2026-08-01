@@ -1,9 +1,8 @@
-import json
 import logging
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict
 
 from app.domains.adaptive_context.models import AdaptiveContext
 from app.domains.coach.exceptions import (
@@ -20,6 +19,7 @@ from app.domains.negotiation_turn.models import (
 )
 from app.llm.observability import generate_with_observability
 from app.llm.provider import LLMProvider
+from app.llm.structured_json import parse_structured_json
 from app.prompts.coach import CoachPromptBuilder
 from app.services.adaptive_context import AdaptiveContextService
 
@@ -50,26 +50,25 @@ class CoachObservationExtractor:
         turns: list[NegotiationTurn],
         adaptive_context: AdaptiveContext | None = None,
     ) -> CoachObservation:
-        response = generate_with_observability(
+        raw_response = generate_with_observability(
             self._llm_provider,
             logger,
             "coach_observation_extraction",
             system_prompt=self._prompt_builder.build_system_prompt(adaptive_context),
             user_prompt=self._prompt_builder.build_user_prompt(turns),
             session_id=turns[0].session_id if turns else None,
-        ).strip()
-        if not response:
-            raise EmptyCoachObservationResponseError()
-
-        try:
-            data = json.loads(response)
-        except json.JSONDecodeError:
-            raise InvalidCoachObservationJsonError() from None
-
-        try:
-            payload = _CoachObservationPayload.model_validate(data)
-        except ValidationError:
-            raise InvalidCoachObservationDataError() from None
+            temperature=0.0,
+        )
+        payload = parse_structured_json(
+            raw_response,
+            _CoachObservationPayload,
+            logger=logger,
+            operation="coach_observation_extraction",
+            session_id=turns[0].session_id if turns else None,
+            empty_response_error=EmptyCoachObservationResponseError,
+            invalid_json_error=InvalidCoachObservationJsonError,
+            invalid_data_error=InvalidCoachObservationDataError,
+        )
 
         return CoachObservation(
             strengths=payload.strengths,

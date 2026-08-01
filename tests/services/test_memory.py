@@ -151,6 +151,7 @@ def test_extractor_parses_valid_json_and_sorts_inputs_by_session_id() -> None:
     provider.generate.assert_called_once_with(
         system_prompt="memory system prompt",
         user_prompt="memory user prompt",
+        temperature=0.0,
     )
 
 

@@ -135,6 +135,7 @@ def test_valid_json_produces_strategy_and_sorts_unique_priorities() -> None:
     provider.generate.assert_called_once_with(
         system_prompt="strategy system prompt",
         user_prompt="strategy user prompt",
+        temperature=0.0,
     )
 
 

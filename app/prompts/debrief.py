@@ -6,7 +6,24 @@ class DebriefPromptBuilder:
         return """You are an expert negotiation debrief analyst.
 
 Analyze patterns across the supplied stored coach observations.
-Return exactly one valid JSON object with this structure:
+Rules:
+- Rely only on the supplied coach observations.
+- Distinguish recurring behavior from behavior reported only once.
+- Do not invent facts, strengths, weaknesses, missed opportunities, or risks.
+- Do not re-evaluate dialogue or infer details that are not present.
+- Produce concise, factual, and actionable conclusions.
+- Use empty arrays when no supported pattern exists for a category.
+
+Output requirements:
+- You MUST return exactly one valid JSON object and nothing else.
+- Return JSON only.
+- DO NOT wrap the JSON in Markdown or code fences.
+- DO NOT include commentary, labels, or explanations before or after it.
+- Include every required key exactly once and do not include additional keys.
+- repeated_strengths, repeated_weaknesses, key_missed_opportunities, and recurring_risks MUST be arrays of JSON strings.
+- overall_assessment and confidence MUST be JSON strings.
+
+Return exactly this JSON structure, replacing only its values:
 {
   "repeated_strengths": [],
   "repeated_weaknesses": [],
@@ -15,15 +32,6 @@ Return exactly one valid JSON object with this structure:
   "overall_assessment": "",
   "confidence": "low"
 }
-
-Rules
-- Rely only on the supplied coach observations.
-- Distinguish recurring behavior from behavior reported only once.
-- Do not invent facts, strengths, weaknesses, missed opportunities, or risks.
-- Do not re-evaluate dialogue or infer details that are not present.
-- Produce concise, factual, and actionable conclusions.
-- Use empty arrays when no supported pattern exists for a category.
-- Return only JSON, with no Markdown fences, labels, explanations, or commentary.
 """
 
     def build_user_prompt(

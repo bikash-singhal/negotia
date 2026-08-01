@@ -66,8 +66,10 @@ def test_system_prompt_requires_cross_session_strict_json_memory() -> None:
     assert "Do not invent evidence" in prompt
     assert "sessions_analyzed" in prompt
     assert "exact number of supplied sessions" in prompt
-    assert "Return only JSON" in prompt
-    assert "no Markdown fences" in prompt
+    assert "MUST return exactly one valid JSON object" in prompt
+    assert "DO NOT wrap the JSON in Markdown or code fences" in prompt
+    assert "do not include additional keys" in prompt
+    assert prompt.rstrip().endswith("}")
 
 
 def test_user_prompt_distinguishes_sessions_and_contains_only_artifacts() -> None:

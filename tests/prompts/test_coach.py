@@ -40,8 +40,10 @@ def test_system_prompt_forbids_invention_and_requires_json_only() -> None:
         "Do not invent strengths, weaknesses, missed opportunities, or risk signals"
         in prompt
     )
-    assert "Return only JSON" in prompt
-    assert "no Markdown fences" in prompt
+    assert "MUST return exactly one valid JSON object" in prompt
+    assert "DO NOT wrap the JSON in Markdown or code fences" in prompt
+    assert "do not include additional keys" in prompt
+    assert prompt.rstrip().endswith("}")
     assert "explanations" in prompt
 
 

@@ -34,8 +34,10 @@ def test_system_prompt_requires_actionable_prioritized_json_strategy() -> None:
     assert "positive, unique integers" in prompt
     assert "example language" in prompt
     assert "success indicator" in prompt
-    assert "Return only JSON" in prompt
-    assert "no Markdown fences" in prompt
+    assert "MUST return exactly one valid JSON object" in prompt
+    assert "DO NOT wrap the JSON in Markdown or code fences" in prompt
+    assert "do not include additional keys" in prompt
+    assert prompt.rstrip().endswith("}")
 
 
 def test_system_prompt_keeps_long_term_skills_fewer_than_tactics() -> None:
