@@ -3,6 +3,7 @@ from typing import Any
 
 from app.aws.session import get_bedrock_runtime_client
 from app.core.observability import log_event
+from app.llm.exceptions import MissingLLMProviderTextError
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +35,17 @@ class BedrockLLMProvider:
         self,
         system_prompt: str,
         user_prompt: str,
+        *,
+        temperature: float | None = None,
     ) -> str:
-        response = self._client.converse(
-            modelId=self._model_id,
-            system=[
+        request: dict[str, Any] = {
+            "modelId": self._model_id,
+            "system": [
                 {
                     "text": system_prompt,
                 }
             ],
-            messages=[
+            "messages": [
                 {
                     "role": "user",
                     "content": [
@@ -52,5 +55,37 @@ class BedrockLLMProvider:
                     ],
                 }
             ],
-        )
-        return response["output"]["message"]["content"][0]["text"]
+        }
+        if temperature is not None:
+            request["inferenceConfig"] = {"temperature": temperature}
+
+        response = self._client.converse(**request)
+        return _extract_first_text_block(response)
+
+
+def _extract_first_text_block(response: object) -> str:
+    if not isinstance(response, dict):
+        raise MissingLLMProviderTextError()
+
+    output = response.get("output")
+    if not isinstance(output, dict):
+        raise MissingLLMProviderTextError()
+
+    message = output.get("message")
+    if not isinstance(message, dict):
+        raise MissingLLMProviderTextError()
+
+    content = message.get("content")
+    if not isinstance(content, list):
+        raise MissingLLMProviderTextError()
+
+    for block in content:
+        if not isinstance(block, dict) or "text" not in block:
+            continue
+
+        text = block["text"]
+        if not isinstance(text, str) or not text.strip():
+            raise MissingLLMProviderTextError()
+        return text
+
+    raise MissingLLMProviderTextError()

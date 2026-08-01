@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.llm.bedrock import BedrockLLMProvider
+from app.llm.exceptions import MissingLLMProviderTextError
 from app.llm.provider import LLMProvider
 
 MODEL_ID = "example-model-id"
@@ -86,6 +87,63 @@ def test_generate_returns_extracted_response_text() -> None:
     response = provider.generate(SYSTEM_PROMPT, USER_PROMPT)
 
     assert response == RESPONSE_TEXT
+
+
+def test_generate_extracts_first_text_block_after_non_text_content() -> None:
+    client = MagicMock()
+    client.converse.return_value = {
+        "output": {
+            "message": {
+                "content": [
+                    {"reasoningContent": {"reasoningText": {"text": "internal"}}},
+                    {"text": RESPONSE_TEXT},
+                ]
+            }
+        }
+    }
+    provider = BedrockLLMProvider(MODEL_ID, client)
+
+    assert provider.generate(SYSTEM_PROMPT, USER_PROMPT) == RESPONSE_TEXT
+
+
+@pytest.mark.parametrize(
+    "content",
+    [[], [{"toolUse": {"name": "unexpected"}}], [{"text": "   "}]],
+    ids=["empty-content", "no-text-block", "blank-text"],
+)
+def test_generate_rejects_response_without_non_blank_text(
+    content: list[dict[str, object]],
+) -> None:
+    client = MagicMock()
+    client.converse.return_value = {"output": {"message": {"content": content}}}
+    provider = BedrockLLMProvider(MODEL_ID, client)
+
+    with pytest.raises(MissingLLMProviderTextError) as exc_info:
+        provider.generate(SYSTEM_PROMPT, USER_PROMPT)
+
+    assert str(exc_info.value) == (
+        "The LLM provider response did not contain non-blank text."
+    )
+
+
+def test_generate_passes_per_call_temperature_to_converse() -> None:
+    client = MagicMock()
+    client.converse.return_value = _bedrock_response()
+    provider = BedrockLLMProvider(MODEL_ID, client)
+
+    provider.generate(SYSTEM_PROMPT, USER_PROMPT, temperature=0.0)
+
+    client.converse.assert_called_once_with(
+        modelId=MODEL_ID,
+        system=[{"text": SYSTEM_PROMPT}],
+        messages=[
+            {
+                "role": "user",
+                "content": [{"text": USER_PROMPT}],
+            }
+        ],
+        inferenceConfig={"temperature": 0.0},
+    )
 
 
 def test_generate_propagates_bedrock_exception() -> None:

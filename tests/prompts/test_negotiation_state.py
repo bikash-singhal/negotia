@@ -33,8 +33,11 @@ def test_system_prompt_defines_state_extraction_task_and_json_structure() -> Non
     assert '"open_topics"' in prompt
     assert '"unresolved_items"' in prompt
     assert '"negotiation_stage"' in prompt
-    assert "Return only JSON" in prompt
-    assert "no Markdown fences" in prompt
+    assert "MUST return exactly one valid JSON object" in prompt
+    assert "DO NOT wrap the JSON in Markdown or code fences" in prompt
+    assert "DO NOT include a preamble" in prompt
+    assert "do not include additional keys" in prompt
+    assert prompt.rfind('"negotiation_stage"') > prompt.index("Output requirements")
 
 
 def test_system_prompt_forbids_invention() -> None:

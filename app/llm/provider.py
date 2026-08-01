@@ -7,4 +7,6 @@ class LLMProvider(Protocol):
         self,
         system_prompt: str,
         user_prompt: str,
+        *,
+        temperature: float | None = None,
     ) -> str: ...

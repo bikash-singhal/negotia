@@ -3,6 +3,8 @@ class FakeLLMProvider:
         self,
         system_prompt: str,
         user_prompt: str,
+        *,
+        temperature: float | None = None,
     ) -> str:
         if system_prompt.startswith("You are an expert negotiation memory analyst"):
             session_count = 2

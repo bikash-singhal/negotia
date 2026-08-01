@@ -16,6 +16,9 @@ _STRUCTURED_DEFAULTS: dict[str, object] = {
     "model_id": "-",
     "duration_ms": "-",
     "outcome": "-",
+    "output_length": "-",
+    "fence_detected": "-",
+    "failure_category": "-",
 }
 
 
@@ -60,6 +63,9 @@ def log_event(
     model_id: str | None = None,
     duration_ms: float | None = None,
     outcome: str | None = None,
+    output_length: int | None = None,
+    fence_detected: bool | None = None,
+    failure_category: str | None = None,
     exc_info: Any = None,
 ) -> None:
     try:
@@ -74,6 +80,9 @@ def log_event(
             "model_id": model_id or "-",
             "duration_ms": duration_ms if duration_ms is not None else "-",
             "outcome": outcome or "-",
+            "output_length": output_length if output_length is not None else "-",
+            "fence_detected": (fence_detected if fence_detected is not None else "-"),
+            "failure_category": failure_category or "-",
         }
         logger.log(
             level,

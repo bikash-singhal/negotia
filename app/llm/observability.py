@@ -13,6 +13,7 @@ def generate_with_observability(
     system_prompt: str,
     user_prompt: str,
     session_id: object | None = None,
+    temperature: float | None = None,
 ) -> str:
     provider_name = type(provider).__name__
     model_id = _model_id(provider)
@@ -28,10 +29,17 @@ def generate_with_observability(
     )
 
     try:
-        response = provider.generate(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-        )
+        if temperature is None:
+            response = provider.generate(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+        else:
+            response = provider.generate(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=temperature,
+            )
     except Exception:
         log_event(
             logger,

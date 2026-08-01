@@ -24,6 +24,9 @@ def configure_logging(debug: bool = False) -> None:
                         "session_id=%(session_id)s | stage=%(stage)s | "
                         "provider=%(provider)s | model_id=%(model_id)s | "
                         "duration_ms=%(duration_ms)s | outcome=%(outcome)s | "
+                        "output_length=%(output_length)s | "
+                        "fence_detected=%(fence_detected)s | "
+                        "failure_category=%(failure_category)s | "
                         "%(message)s"
                     ),
                     "datefmt": "%Y-%m-%d %H:%M:%S",

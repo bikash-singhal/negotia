@@ -1,4 +1,5 @@
 import json
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -61,7 +62,62 @@ def test_valid_json_produces_negotiation_state() -> None:
     provider.generate.assert_called_once_with(
         system_prompt="state system prompt",
         user_prompt="state user prompt",
+        temperature=0.0,
     )
+
+
+def test_json_with_surrounding_whitespace_is_accepted() -> None:
+    response = (
+        "  \n"
+        + json.dumps(
+            {
+                "latest_user_position": None,
+                "latest_opponent_position": None,
+                "agreements": [],
+                "open_topics": [],
+                "unresolved_items": [],
+                "negotiation_stage": "opening",
+            }
+        )
+        + "\n  "
+    )
+    extractor, _, _ = _build_extractor(response)
+
+    state = extractor.extract([])
+
+    assert state.negotiation_stage == "opening"
+
+
+@pytest.mark.parametrize("opening_fence", ["```json", "```"])
+def test_one_outer_markdown_fence_is_removed(opening_fence: str) -> None:
+    payload = json.dumps(
+        {
+            "latest_user_position": None,
+            "latest_opponent_position": None,
+            "agreements": [],
+            "open_topics": [],
+            "unresolved_items": [],
+            "negotiation_stage": "opening",
+        }
+    )
+    extractor, _, _ = _build_extractor(f"  {opening_fence}\n{payload}\n```  ")
+
+    state = extractor.extract([])
+
+    assert state.negotiation_stage == "opening"
+
+
+def test_explanatory_preamble_is_rejected() -> None:
+    response = (
+        "Here is the requested state:\n"
+        '{"latest_user_position": null, "latest_opponent_position": null, '
+        '"agreements": [], "open_topics": [], "unresolved_items": [], '
+        '"negotiation_stage": "opening"}'
+    )
+    extractor, _, _ = _build_extractor(response)
+
+    with pytest.raises(InvalidNegotiationStateJsonError):
+        extractor.extract([])
 
 
 def test_empty_lists_and_null_positions_are_supported() -> None:
@@ -108,6 +164,35 @@ def test_invalid_json_raises_expected_exception_without_raw_output() -> None:
         "The LLM provider returned invalid JSON for negotiation state extraction."
     )
     assert "private content" not in str(exc_info.value)
+
+
+def test_invalid_output_logs_only_safe_diagnostics(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sensitive_output = "sensitive raw negotiation output"
+    extractor, _, _ = _build_extractor(sensitive_output)
+    state_logger = logging.getLogger("app.services.negotiation_state")
+    previous_disabled = state_logger.disabled
+    state_logger.disabled = False
+    caplog.set_level(logging.WARNING, logger="app.services.negotiation_state")
+
+    try:
+        with pytest.raises(InvalidNegotiationStateJsonError):
+            extractor.extract([])
+    finally:
+        state_logger.disabled = previous_disabled
+
+    parse_record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "negotiation_state_parse_failed"
+    )
+    assert getattr(parse_record, "output_length", None) == len(sensitive_output)
+    assert getattr(parse_record, "fence_detected", None) is False
+    assert getattr(parse_record, "failure_category", None) == "invalid_json"
+    assert sensitive_output not in "\n".join(
+        record.getMessage() for record in caplog.records
+    )
 
 
 @pytest.mark.parametrize(

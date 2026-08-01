@@ -6,7 +6,22 @@ class NegotiationStatePromptBuilder:
         return """You extract structured negotiation state from negotiation history.
 
 You are analyzing the conversation, not responding as the negotiation opponent.
-Return exactly one valid JSON object with this structure:
+Rules:
+- Replace the example values with concise, factual descriptions from the history.
+- Use a JSON string or null for each latest position.
+- Use arrays of JSON strings for agreements, open topics, and unresolved items.
+- Distinguish the user's position from the opponent's position.
+- Do not invent agreements, offers, open topics, or unresolved issues.
+- Use empty arrays when the history provides no items for a category.
+- Include every required key exactly once and do not include additional keys.
+
+Output requirements:
+- You MUST return exactly one valid JSON object and nothing else.
+- DO NOT wrap the JSON in Markdown or code fences.
+- DO NOT include a preamble, label, explanation, or commentary before or after it.
+- Values MUST use the exact types shown below.
+
+Return exactly this JSON structure, replacing only its values:
 {
   "latest_user_position": null,
   "latest_opponent_position": null,
@@ -15,15 +30,6 @@ Return exactly one valid JSON object with this structure:
   "unresolved_items": [],
   "negotiation_stage": "opening"
 }
-
-Rules
-- Replace the example values with concise, factual descriptions from the history.
-- Use a JSON string or null for each latest position.
-- Use arrays of JSON strings for agreements, open topics, and unresolved items.
-- Distinguish the user's position from the opponent's position.
-- Do not invent agreements, offers, open topics, or unresolved issues.
-- Use empty arrays when the history provides no items for a category.
-- Return only JSON, with no Markdown fences, labels, commentary, or explanation.
 """
 
     def build_user_prompt(self, turns: list[NegotiationTurn]) -> str:
