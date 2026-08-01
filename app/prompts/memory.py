@@ -6,14 +6,36 @@ class MemoryPromptBuilder:
     def build_system_prompt(self) -> str:
         return """You are an expert negotiation memory analyst.
 
-Identify cross-session patterns using only the supplied persisted negotiation
-debriefs and strategies.
+Build a compact coaching profile of cross-session patterns by comparing the
+supplied persisted negotiation debriefs and strategies in chronological order
+from oldest to newest.
+
+Trend definitions:
+- A stable strength is useful behavior demonstrated repeatedly across sessions.
+- A stable weakness is a weakness demonstrated repeatedly across sessions.
+- An improving skill was previously weak or prioritized and is meaningfully better
+  in newer sessions.
+- A persistent risk is harmful behavior that continues despite prior strategy
+  recommendations.
+- A regression is behavior that was previously stronger and later became worse.
+
 Rules:
-- Treat each labelled session as distinct evidence.
+- Treat each chronologically labelled session as distinct evidence.
 - Do not treat one isolated observation as a recurring pattern.
+- Do not claim improvement or regression without chronological evidence.
+- With only two sessions, use cautious language for any trend claim.
 - Do not invent evidence, behavior, progress, risks, or recommendations.
 - Base every conclusion only on the supplied debrief and strategy artifacts.
-- Make focus areas and drills concise and actionable.
+- Semantically synthesize equivalent observations instead of copying or
+  concatenating per-session wording.
+- Merge overlapping concepts into one concise, actionable coaching statement.
+- Do not repeat the same concept across stable weaknesses, persistent risks, and
+  highest-priority skill unless the evidence makes that overlap necessary.
+- Select exactly one highest-leverage skill to practice next.
+- Provide exactly one concrete next-session drill.
+- Summarize both supported progress and remaining work concisely.
+- stable_strengths and stable_weaknesses contain at most 3 strings each.
+- improving_skills and persistent_risks contain at most 2 strings each.
 - Set sessions_analyzed to the exact number of supplied sessions.
 - Use empty arrays when the artifacts do not support a category.
 
@@ -23,17 +45,19 @@ Output requirements:
 - DO NOT wrap the JSON in Markdown or code fences.
 - DO NOT include commentary, labels, or explanations before or after it.
 - Include every required key exactly once and do not include additional keys.
-- recurring_strengths, recurring_weaknesses, improving_skills, persistent_risks, priority_focus_areas, and recommended_drills MUST be arrays of JSON strings.
+- stable_strengths, stable_weaknesses, improving_skills, and persistent_risks MUST be arrays of concise JSON strings.
+- highest_priority_skill, next_session_drill, progress_summary, and confidence MUST be JSON strings.
 - sessions_analyzed MUST be a positive JSON integer and confidence MUST be a JSON string.
 
 Return exactly this JSON structure, replacing only its values:
 {
-  "recurring_strengths": [],
-  "recurring_weaknesses": [],
+  "stable_strengths": [],
+  "stable_weaknesses": [],
   "improving_skills": [],
   "persistent_risks": [],
-  "priority_focus_areas": [],
-  "recommended_drills": [],
+  "highest_priority_skill": "",
+  "next_session_drill": "",
+  "progress_summary": "",
   "sessions_analyzed": 2,
   "confidence": "low"
 }
@@ -50,6 +74,7 @@ Return exactly this JSON structure, replacing only its values:
         rendered_sessions = "\n\n".join(
             self._render_session(
                 position,
+                len(debrief_records),
                 debrief_record,
                 strategies_by_session[debrief_record.session_id],
             )
@@ -66,14 +91,24 @@ Return exactly this JSON structure, replacing only its values:
     def _render_session(
         cls,
         position: int,
+        session_count: int,
         debrief_record: NegotiationDebriefRecord,
         strategy_record: NegotiationStrategyRecord,
     ) -> str:
         debrief = debrief_record.debrief
         strategy = strategy_record.strategy
+        if session_count == 1:
+            session_label = "Session 1 — oldest and newest"
+        elif position == 1:
+            session_label = "Session 1 — oldest"
+        elif position == session_count:
+            session_label = f"Session {position} — newest"
+        else:
+            session_label = f"Session {position}"
+
         return "\n".join(
             (
-                f"Session {position}",
+                session_label,
                 f"Session ID: {debrief_record.session_id}",
                 "",
                 "Persisted debrief",

@@ -9,7 +9,7 @@ from app.core.config import Settings
 def test_default_llm_provider_is_fake(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.setenv("LLM_PROVIDER", "fake")
 
     settings = Settings()
 

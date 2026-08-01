@@ -2,10 +2,15 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
+import pytest
+
 from app.domains.scenario.models import Scenario, ScenarioDifficulty
 from app.domains.scenario.repository import ScenarioRepository
-from app.domains.scenario.schemas import ScenarioCreate
+from app.domains.scenario.schemas import ScenarioCreate, ScenarioGenerateRequest
 from app.domains.scenario.service import ScenarioService
+from app.llm.fake import FakeLLMProvider
+from app.prompts.scenario import ScenarioPromptBuilder
+from app.services.scenario import ScenarioGenerator
 from tests.ownership import TEST_USER_ID
 
 
@@ -45,6 +50,18 @@ def _create_scenario() -> Scenario:
         created_at=now,
         updated_at=now,
     )
+
+
+def _generate_request() -> ScenarioGenerateRequest:
+    return ScenarioGenerateRequest(
+        title="Salary negotiation at Microsoft",
+        difficulty=ScenarioDifficulty.INTERMEDIATE,
+        description="Negotiate an improved compensation package professionally.",
+    )
+
+
+def _generator() -> ScenarioGenerator:
+    return ScenarioGenerator(ScenarioPromptBuilder(), FakeLLMProvider())
 
 
 def test_create_scenario_copies_mutable_lists() -> None:
@@ -112,6 +129,47 @@ def test_create_scenario_is_stored_in_repository() -> None:
     scenario = service.create_scenario(_create_request(), TEST_USER_ID)
 
     assert repository.get_for_user(scenario.scenario_id, TEST_USER_ID) is scenario
+
+
+def test_generate_scenario_preserves_user_input_and_ownership() -> None:
+    repository = ScenarioRepository()
+    service = ScenarioService(repository, _generator())
+    request = _generate_request()
+
+    scenario = service.generate_scenario(request, TEST_USER_ID)
+
+    assert scenario.title == request.title
+    assert scenario.description == request.description
+    assert scenario.difficulty is request.difficulty
+    assert scenario.user_id == TEST_USER_ID
+    assert repository.get_for_user(scenario.scenario_id, TEST_USER_ID) is scenario
+
+
+def test_generate_scenario_persists_every_generated_field() -> None:
+    service = ScenarioService(ScenarioRepository(), _generator())
+
+    scenario = service.generate_scenario(_generate_request(), TEST_USER_ID)
+
+    assert scenario.industry == "Technology"
+    assert scenario.opponent_role == "Recruiter"
+    assert scenario.objective
+    assert scenario.personality
+    assert scenario.negotiation_style
+    assert scenario.constraints
+    assert scenario.hidden_context
+    assert scenario.walk_away_conditions
+
+
+def test_generate_scenario_does_not_persist_when_generation_fails() -> None:
+    repository = ScenarioRepository()
+    generator = MagicMock(spec=ScenarioGenerator)
+    generator.generate.side_effect = RuntimeError("generation failed")
+    service = ScenarioService(repository, generator)
+
+    with pytest.raises(RuntimeError, match="generation failed"):
+        service.generate_scenario(_generate_request(), TEST_USER_ID)
+
+    assert repository.list_for_user(TEST_USER_ID) == []
 
 
 def test_get_scenario_delegates_to_repository() -> None:

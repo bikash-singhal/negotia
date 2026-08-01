@@ -25,6 +25,7 @@ from app.prompts.debrief import DebriefPromptBuilder
 from app.prompts.memory import MemoryPromptBuilder
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
+from app.prompts.scenario import ScenarioPromptBuilder
 from app.prompts.strategy import StrategyPromptBuilder
 from app.security.passwords import PasswordHasher
 from app.security.tokens import AccessTokenManager
@@ -35,6 +36,7 @@ from app.services.memory import MemoryExtractor, MemoryService
 from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
+from app.services.scenario import ScenarioGenerator
 from app.services.strategy import StrategyExtractor, StrategyService
 from app.workflows.completion.service import CompletionWorkflowService
 from tests.workflows.completion.unit_of_work import (
@@ -131,7 +133,10 @@ def ownership_context() -> Iterator[OwnershipContext]:
         ),
     )
 
-    app.state.scenario_service = ScenarioService(scenario_repository)
+    app.state.scenario_service = ScenarioService(
+        scenario_repository,
+        ScenarioGenerator(ScenarioPromptBuilder(), provider),
+    )
     app.state.negotiation_service = negotiation_service
     app.state.negotiation_turn_service = turn_service
     app.state.opponent_service = opponent_service
@@ -186,15 +191,7 @@ def _scenario_payload(title: str = "Supplier contract renewal") -> dict[str, obj
     return {
         "title": title,
         "description": "Renegotiate annual supplier pricing and delivery terms.",
-        "industry": "Manufacturing",
-        "opponent_role": "Supplier account director",
-        "objective": "Secure improved pricing and delivery guarantees.",
         "difficulty": "intermediate",
-        "constraints": ["Annual budget cannot increase"],
-        "personality": "Analytical and cautious",
-        "negotiation_style": "Collaborative",
-        "hidden_context": ["The supplier recently lost a major client"],
-        "walk_away_conditions": ["Price increase above five percent"],
     }
 
 
@@ -296,6 +293,11 @@ def _create_completed_exchange(
         ("GET", f"/api/v1/turns/{uuid4()}", None),
         ("GET", f"/api/v1/negotiations/{uuid4()}/turns", None),
         ("POST", f"/api/v1/negotiations/{uuid4()}/opponent-response", None),
+        (
+            "POST",
+            f"/api/v1/negotiations/{uuid4()}/opponent-response/stream",
+            None,
+        ),
         ("POST", f"/api/v1/negotiations/{uuid4()}/complete", None),
     ],
 )
@@ -397,6 +399,10 @@ def test_users_can_list_only_their_resources_and_cannot_access_foreign_resources
         ),
         client.post(
             f"/api/v1/negotiations/{session_a['id']}/opponent-response",
+            headers=user_b_headers,
+        ),
+        client.post(
+            f"/api/v1/negotiations/{session_a['id']}/opponent-response/stream",
             headers=user_b_headers,
         ),
         client.post(

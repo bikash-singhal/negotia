@@ -21,6 +21,27 @@ class ScenarioCreate(BaseModel):
     walk_away_conditions: list[str]
 
 
+class ScenarioGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
+    difficulty: ScenarioDifficulty
+    description: str
+
+
+class ScenarioGeneratedFields(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    industry: str
+    opponent_role: str
+    objective: str
+    personality: str
+    negotiation_style: str
+    constraints: list[str]
+    hidden_context: list[str]
+    walk_away_conditions: list[str]
+
+
 class ScenarioResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

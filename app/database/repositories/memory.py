@@ -35,12 +35,13 @@ def negotiator_memory_to_model(
         id=record.id,
         user_id=record.user_id,
         trigger_session_id=record.trigger_session_id,
-        recurring_strengths=list(record.memory.recurring_strengths),
-        recurring_weaknesses=list(record.memory.recurring_weaknesses),
+        stable_strengths=list(record.memory.stable_strengths),
+        stable_weaknesses=list(record.memory.stable_weaknesses),
         improving_skills=list(record.memory.improving_skills),
         persistent_risks=list(record.memory.persistent_risks),
-        priority_focus_areas=list(record.memory.priority_focus_areas),
-        recommended_drills=list(record.memory.recommended_drills),
+        highest_priority_skill=record.memory.highest_priority_skill,
+        next_session_drill=record.memory.next_session_drill,
+        progress_summary=record.memory.progress_summary,
         sessions_analyzed=record.memory.sessions_analyzed,
         confidence=record.memory.confidence,
         created_at=record.created_at,
@@ -78,13 +79,13 @@ def negotiator_memory_to_domain(
         user_id=model.user_id,
         trigger_session_id=model.trigger_session_id,
         memory=NegotiatorMemory(
-            recurring_strengths=_require_string_list(
-                model.recurring_strengths,
-                "recurring_strengths",
+            stable_strengths=_require_string_list(
+                model.stable_strengths,
+                "stable_strengths",
             ),
-            recurring_weaknesses=_require_string_list(
-                model.recurring_weaknesses,
-                "recurring_weaknesses",
+            stable_weaknesses=_require_string_list(
+                model.stable_weaknesses,
+                "stable_weaknesses",
             ),
             improving_skills=_require_string_list(
                 model.improving_skills,
@@ -94,14 +95,9 @@ def negotiator_memory_to_domain(
                 model.persistent_risks,
                 "persistent_risks",
             ),
-            priority_focus_areas=_require_string_list(
-                model.priority_focus_areas,
-                "priority_focus_areas",
-            ),
-            recommended_drills=_require_string_list(
-                model.recommended_drills,
-                "recommended_drills",
-            ),
+            highest_priority_skill=model.highest_priority_skill,
+            next_session_drill=model.next_session_drill,
+            progress_summary=model.progress_summary,
             sessions_analyzed=model.sessions_analyzed,
             confidence=model.confidence,
         ),

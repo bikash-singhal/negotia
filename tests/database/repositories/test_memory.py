@@ -73,12 +73,13 @@ def _persist_sessions(
 
 def _memory(sessions_analyzed: int = 2) -> NegotiatorMemory:
     return NegotiatorMemory(
-        recurring_strengths=["Uses conditional concessions."],
-        recurring_weaknesses=["Anchors before discovery."],
+        stable_strengths=["Uses conditional concessions."],
+        stable_weaknesses=["Anchors before discovery."],
         improving_skills=["Diagnostic questioning"],
         persistent_risks=["Concedes without reciprocal value."],
-        priority_focus_areas=["Concession planning"],
-        recommended_drills=["Prepare reciprocal asks."],
+        highest_priority_skill="Concession planning",
+        next_session_drill="Prepare reciprocal asks.",
+        progress_summary="Questioning is improving; concessions remain a risk.",
         sessions_analyzed=sessions_analyzed,
         confidence="high",
     )
@@ -148,18 +149,14 @@ def test_negotiator_memory_mapping_round_trip_copies_all_lists() -> None:
     mapped = negotiator_memory_to_domain(model, list(reversed(source_models)))
 
     assert mapped == record
-    assert model.recurring_strengths is not record.memory.recurring_strengths
-    assert model.recurring_weaknesses is not record.memory.recurring_weaknesses
+    assert model.stable_strengths is not record.memory.stable_strengths
+    assert model.stable_weaknesses is not record.memory.stable_weaknesses
     assert model.improving_skills is not record.memory.improving_skills
     assert model.persistent_risks is not record.memory.persistent_risks
-    assert model.priority_focus_areas is not record.memory.priority_focus_areas
-    assert model.recommended_drills is not record.memory.recommended_drills
-    assert mapped.memory.recurring_strengths is not model.recurring_strengths
-    assert mapped.memory.recurring_weaknesses is not model.recurring_weaknesses
+    assert mapped.memory.stable_strengths is not model.stable_strengths
+    assert mapped.memory.stable_weaknesses is not model.stable_weaknesses
     assert mapped.memory.improving_skills is not model.improving_skills
     assert mapped.memory.persistent_risks is not model.persistent_risks
-    assert mapped.memory.priority_focus_areas is not model.priority_focus_areas
-    assert mapped.memory.recommended_drills is not model.recommended_drills
 
 
 def test_create_reads_and_list_return_detached_persisted_records(
@@ -352,5 +349,5 @@ def test_memory_service_behavior_is_unchanged_and_persisted(
     repeated = service.generate_for_session(sessions[1].id, TEST_USER_ID)
     assert reloaded == result
     assert repeated == result
-    assert result.source_session_ids == tuple(sorted((s.id for s in sessions), key=str))
+    assert result.source_session_ids == tuple(session.id for session in sessions)
     extractor.extract.assert_called_once()

@@ -1,3 +1,5 @@
+import json
+import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
@@ -26,6 +28,7 @@ from app.prompts.debrief import DebriefPromptBuilder
 from app.prompts.memory import MemoryPromptBuilder
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
+from app.prompts.scenario import ScenarioPromptBuilder
 from app.prompts.strategy import StrategyPromptBuilder
 from app.services.adaptive_context import AdaptiveContextService
 from app.services.coach import CoachObservationExtractor, CoachService
@@ -34,6 +37,7 @@ from app.services.memory import MemoryExtractor, MemoryService
 from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
+from app.services.scenario import ScenarioGenerator
 from app.services.strategy import StrategyExtractor, StrategyService
 from app.workflows.completion.service import CompletionWorkflowService
 from tests.api.v1.authentication import TEST_USER, authenticated_request
@@ -142,7 +146,10 @@ def client(
         app.state.negotiation_engine,
     )
     scenario_repository, negotiation_repository, turn_repository = repositories
-    app.state.scenario_service = ScenarioService(scenario_repository)
+    app.state.scenario_service = ScenarioService(
+        scenario_repository,
+        ScenarioGenerator(ScenarioPromptBuilder(), FakeLLMProvider()),
+    )
     negotiation_service = NegotiationService(
         negotiation_repository,
         scenario_repository,
@@ -217,15 +224,7 @@ def _valid_scenario_data() -> dict[str, object]:
     return {
         "title": "Supplier contract renewal",
         "description": "Renegotiate the annual supplier contract and delivery terms.",
-        "industry": "Manufacturing",
-        "opponent_role": "Supplier account director",
-        "objective": "Secure improved pricing and delivery guarantees.",
         "difficulty": "intermediate",
-        "constraints": ["Annual budget cannot increase"],
-        "personality": "Analytical and cautious",
-        "negotiation_style": "Collaborative",
-        "hidden_context": ["The supplier recently lost a major client"],
-        "walk_away_conditions": ["Price increase above five percent"],
     }
 
 
@@ -261,6 +260,10 @@ def _create_turn(
     )
     assert response.status_code == 201
     return response.json()
+
+
+def _stream_events(response_text: str) -> list[dict[str, object]]:
+    return [json.loads(line) for line in response_text.splitlines() if line]
 
 
 def _replace_opponent_provider(
@@ -521,3 +524,158 @@ def test_provider_exception_propagates_without_persisting(
         )
         == []
     )
+
+
+def test_streamed_response_emits_chunks_and_persists_one_coached_turn(
+    client: TestClient,
+    coach_repository: CoachObservationRepository,
+) -> None:
+    session = _create_session(client)
+    user_turn = _create_turn(client, session["id"])
+
+    response = client.post(
+        f"/api/v1/negotiations/{session['id']}/opponent-response/stream"
+    )
+    events = _stream_events(response.text)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    assert events[0] == {"type": "started"}
+    assert len([event for event in events if event["type"] == "delta"]) > 1
+    completed = events[-1]
+    assert completed["type"] == "completed"
+    turn = completed["turn"]
+    assert isinstance(turn, dict)
+    assert turn["content"] == FAKE_RESPONSE
+    assert turn["speaker"] == "opponent"
+
+    history = client.get(f"/api/v1/negotiations/{session['id']}/turns").json()
+    assert history == [user_turn, turn]
+    observations = coach_repository.list_by_session_for_user(
+        _parse_uuid(session["id"]),
+        TEST_USER.id,
+    )
+    assert len(observations) == 1
+    assert observations[0].opponent_turn_id == _parse_uuid(turn["id"])
+
+
+def test_stream_provider_failure_emits_safe_error_without_persistence_or_coach(
+    client: TestClient,
+    repositories: Repositories,
+    coach_repository: CoachObservationRepository,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session = _create_session(client)
+    user_turn = _create_turn(client, session["id"])
+    sensitive_partial = "SENSITIVE STREAM CONTENT"
+    provider = MagicMock(spec=LLMProvider)
+
+    def failing_stream() -> Iterator[str]:
+        yield sensitive_partial
+        raise RuntimeError("private provider failure")
+
+    provider.stream.return_value = failing_stream()
+    _replace_opponent_provider(repositories, coach_repository, provider)
+
+    with caplog.at_level(logging.DEBUG):
+        response = client.post(
+            f"/api/v1/negotiations/{session['id']}/opponent-response/stream"
+        )
+    events = _stream_events(response.text)
+
+    assert response.status_code == 200
+    assert events[-1] == {
+        "type": "error",
+        "code": "opponent_stream_failed",
+        "message": "The opponent response could not be generated. Please try again.",
+    }
+    assert sensitive_partial not in caplog.text
+    assert "private provider failure" not in caplog.text
+    assert client.get(f"/api/v1/negotiations/{session['id']}/turns").json() == [
+        user_turn
+    ]
+    assert (
+        coach_repository.list_by_session_for_user(
+            _parse_uuid(session["id"]),
+            TEST_USER.id,
+        )
+        == []
+    )
+
+
+def test_empty_stream_output_emits_error_without_persisting(
+    client: TestClient,
+    repositories: Repositories,
+    coach_repository: CoachObservationRepository,
+) -> None:
+    session = _create_session(client)
+    user_turn = _create_turn(client, session["id"])
+    provider = MagicMock(spec=LLMProvider)
+    provider.stream.return_value = iter(["  "])
+    _replace_opponent_provider(repositories, coach_repository, provider)
+
+    response = client.post(
+        f"/api/v1/negotiations/{session['id']}/opponent-response/stream"
+    )
+
+    assert _stream_events(response.text)[-1]["code"] == "empty_opponent_response"
+    assert client.get(f"/api/v1/negotiations/{session['id']}/turns").json() == [
+        user_turn
+    ]
+    assert (
+        coach_repository.list_by_session_for_user(
+            _parse_uuid(session["id"]),
+            TEST_USER.id,
+        )
+        == []
+    )
+
+
+def test_failed_stream_can_be_retried_successfully(
+    client: TestClient,
+    repositories: Repositories,
+    coach_repository: CoachObservationRepository,
+) -> None:
+    session = _create_session(client)
+    user_turn = _create_turn(client, session["id"])
+    provider = MagicMock(spec=LLMProvider)
+    provider.stream.side_effect = [
+        iter(()),
+        iter([FAKE_RESPONSE]),
+    ]
+    _replace_opponent_provider(repositories, coach_repository, provider)
+
+    failed = client.post(
+        f"/api/v1/negotiations/{session['id']}/opponent-response/stream"
+    )
+    retried = client.post(
+        f"/api/v1/negotiations/{session['id']}/opponent-response/stream"
+    )
+
+    assert _stream_events(failed.text)[-1]["type"] == "error"
+    completed = _stream_events(retried.text)[-1]
+    assert completed["type"] == "completed"
+    assert provider.stream.call_count == 2
+    assert len(client.get(f"/api/v1/negotiations/{session['id']}/turns").json()) == 2
+    assert client.get(f"/api/v1/negotiations/{session['id']}/turns").json()[0] == (
+        user_turn
+    )
+
+
+def test_stream_preserves_not_found_and_sequence_errors_before_headers(
+    client: TestClient,
+) -> None:
+    missing = client.post(f"/api/v1/negotiations/{uuid4()}/opponent-response/stream")
+    session = _create_session(client)
+    no_turn = client.post(
+        f"/api/v1/negotiations/{session['id']}/opponent-response/stream"
+    )
+    _create_turn(client, session["id"], speaker="opponent")
+    out_of_sequence = client.post(
+        f"/api/v1/negotiations/{session['id']}/opponent-response/stream"
+    )
+
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "not_found"
+    assert no_turn.status_code == 409
+    assert out_of_sequence.status_code == 409

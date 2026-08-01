@@ -168,3 +168,95 @@ def test_repeated_injected_construction_does_not_create_client() -> None:
     assert first_provider._client is client
     assert second_provider._client is client
     client_factory.assert_not_called()
+
+
+def test_stream_calls_converse_stream_with_exact_request_and_yields_text() -> None:
+    client = MagicMock()
+    client.converse_stream.return_value = {
+        "stream": iter(
+            [
+                {"messageStart": {"role": "assistant"}},
+                {"contentBlockDelta": {"delta": {"text": "First "}}},
+                {"contentBlockDelta": {"delta": {"text": "chunk."}}},
+                {"metadata": {"usage": {"outputTokens": 2}}},
+            ]
+        )
+    }
+    provider = BedrockLLMProvider(MODEL_ID, client)
+
+    chunks = list(provider.stream(SYSTEM_PROMPT, USER_PROMPT))
+
+    assert chunks == ["First ", "chunk."]
+    client.converse_stream.assert_called_once_with(
+        modelId=MODEL_ID,
+        system=[{"text": SYSTEM_PROMPT}],
+        messages=[
+            {
+                "role": "user",
+                "content": [{"text": USER_PROMPT}],
+            }
+        ],
+    )
+
+
+def test_stream_passes_per_call_temperature() -> None:
+    client = MagicMock()
+    client.converse_stream.return_value = {
+        "stream": iter([{"contentBlockDelta": {"delta": {"text": RESPONSE_TEXT}}}])
+    }
+    provider = BedrockLLMProvider(MODEL_ID, client)
+
+    assert list(provider.stream(SYSTEM_PROMPT, USER_PROMPT, temperature=0.4)) == [
+        RESPONSE_TEXT
+    ]
+    client.converse_stream.assert_called_once_with(
+        modelId=MODEL_ID,
+        system=[{"text": SYSTEM_PROMPT}],
+        messages=[
+            {
+                "role": "user",
+                "content": [{"text": USER_PROMPT}],
+            }
+        ],
+        inferenceConfig={"temperature": 0.4},
+    )
+
+
+@pytest.mark.parametrize(
+    "events",
+    [
+        [{"messageStart": {"role": "assistant"}}],
+        [{"contentBlockDelta": {"delta": {"text": "   "}}}],
+    ],
+    ids=["no-text-delta", "blank-text"],
+)
+def test_stream_rejects_response_without_non_blank_text(
+    events: list[dict[str, object]],
+) -> None:
+    client = MagicMock()
+    client.converse_stream.return_value = {"stream": iter(events)}
+    provider = BedrockLLMProvider(MODEL_ID, client)
+
+    with pytest.raises(MissingLLMProviderTextError):
+        list(provider.stream(SYSTEM_PROMPT, USER_PROMPT))
+
+
+def test_stream_rejects_response_without_event_stream() -> None:
+    client = MagicMock()
+    client.converse_stream.return_value = {"not_stream": []}
+    provider = BedrockLLMProvider(MODEL_ID, client)
+
+    with pytest.raises(MissingLLMProviderTextError):
+        list(provider.stream(SYSTEM_PROMPT, USER_PROMPT))
+
+
+def test_stream_propagates_bedrock_exception() -> None:
+    expected_error = RuntimeError("Bedrock stream failed")
+    client = MagicMock()
+    client.converse_stream.side_effect = expected_error
+    provider = BedrockLLMProvider(MODEL_ID, client)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        list(provider.stream(SYSTEM_PROMPT, USER_PROMPT))
+
+    assert exc_info.value is expected_error

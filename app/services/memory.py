@@ -27,6 +27,24 @@ from app.prompts.memory import MemoryPromptBuilder
 logger = logging.getLogger(__name__)
 
 
+def _order_artifact_history(
+    debrief_records: list[NegotiationDebriefRecord],
+    strategy_records: list[NegotiationStrategyRecord],
+) -> tuple[list[NegotiationDebriefRecord], list[NegotiationStrategyRecord]]:
+    strategies_by_session = {record.session_id: record for record in strategy_records}
+    ordered_debriefs = sorted(
+        debrief_records,
+        key=lambda record: (
+            record.created_at,
+            strategies_by_session[record.session_id].created_at,
+        ),
+    )
+    return (
+        ordered_debriefs,
+        [strategies_by_session[record.session_id] for record in ordered_debriefs],
+    )
+
+
 class MemoryExtractor:
     def __init__(
         self,
@@ -52,13 +70,9 @@ class MemoryExtractor:
         if debrief_session_ids != strategy_session_ids:
             raise MismatchedMemoryArtifactSetError()
 
-        ordered_debriefs = sorted(
+        ordered_debriefs, ordered_strategies = _order_artifact_history(
             debrief_records,
-            key=lambda record: str(record.session_id),
-        )
-        ordered_strategies = sorted(
             strategy_records,
-            key=lambda record: str(record.session_id),
         )
         raw_response = generate_with_observability(
             self._llm_provider,
@@ -229,7 +243,7 @@ class MemoryService:
             if strategy_record.debrief_id != debrief_record.id:
                 raise MismatchedMemoryArtifactSetError()
             debrief_records.append(debrief_record)
-        return debrief_records, strategy_records
+        return _order_artifact_history(debrief_records, strategy_records)
 
     def _extract_and_persist(
         self,
@@ -254,13 +268,12 @@ class MemoryService:
         user_id: UUID,
         trigger_session_id: UUID | None,
     ) -> NegotiatorMemoryRecord:
-        memory = self._extractor.extract(debrief_records, strategy_records)
-        source_session_ids = tuple(
-            sorted(
-                (record.session_id for record in strategy_records),
-                key=str,
-            )
+        ordered_debriefs, ordered_strategies = _order_artifact_history(
+            debrief_records,
+            strategy_records,
         )
+        memory = self._extractor.extract(ordered_debriefs, ordered_strategies)
+        source_session_ids = tuple(record.session_id for record in ordered_strategies)
         record = NegotiatorMemoryRecord(
             id=uuid4(),
             user_id=user_id,

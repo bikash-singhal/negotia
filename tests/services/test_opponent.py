@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from inspect import signature
 from unittest.mock import MagicMock
@@ -17,6 +18,7 @@ from app.domains.negotiation_state.models import NegotiationState
 from app.domains.negotiation_turn.exceptions import (
     EmptyOpponentResponseError,
     NegotiationSessionNotFoundError,
+    OpponentResponseInProgressError,
     OpponentResponseOutOfSequenceError,
     OpponentResponseRequiresUserTurnError,
 )
@@ -555,3 +557,142 @@ def test_opponent_service_has_only_adaptive_context_memory_boundary() -> None:
     assert "adaptive_context_service" in parameters
     assert "memory_service" not in parameters
     assert "memory_repository" not in parameters
+
+
+def test_streaming_response_persists_only_after_complete() -> None:
+    negotiation_repository = NegotiationRepository()
+    scenario_repository = ScenarioRepository()
+    turn_repository = NegotiationTurnRepository()
+    scenario = _create_scenario(scenario_repository)
+    session = _create_session(negotiation_repository, scenario.scenario_id)
+    user_turn = _create_turn(turn_repository, session.id)
+    service = OpponentService(
+        negotiation_repository,
+        scenario_repository,
+        turn_repository,
+        _create_state_extractor(),
+        OpponentProfileBuilder(),
+        OpponentPromptBuilder(),
+        FakeLLMProvider(),
+        _create_adaptive_context_service(),
+    )
+    preparation = service.begin_streaming_response(session.id, TEST_USER_ID)
+
+    chunks = list(service.stream_response(preparation))
+
+    assert len(chunks) > 1
+    assert turn_repository.list_by_session_for_user(session.id, TEST_USER_ID) == [
+        user_turn
+    ]
+
+    result = service.complete_streaming_response(preparation, "".join(chunks))
+    service.cancel_streaming_response(preparation)
+
+    assert result.opponent_turn.content == FAKE_RESPONSE
+    assert result.opponent_turn.turn_number == 2
+    assert result.conversation_turns == [user_turn, result.opponent_turn]
+
+
+def test_failed_stream_does_not_persist_and_can_be_retried() -> None:
+    negotiation_repository = NegotiationRepository()
+    scenario_repository = ScenarioRepository()
+    turn_repository = NegotiationTurnRepository()
+    scenario = _create_scenario(scenario_repository)
+    session = _create_session(negotiation_repository, scenario.scenario_id)
+    user_turn = _create_turn(turn_repository, session.id)
+    expected_error = RuntimeError("stream failed")
+    provider = MagicMock(spec=LLMProvider)
+
+    def failing_chunks() -> Iterator[str]:
+        yield "partial"
+        raise expected_error
+
+    provider.stream.return_value = failing_chunks()
+    service = OpponentService(
+        negotiation_repository,
+        scenario_repository,
+        turn_repository,
+        _create_state_extractor(),
+        OpponentProfileBuilder(),
+        OpponentPromptBuilder(),
+        provider,
+        _create_adaptive_context_service(),
+    )
+    preparation = service.begin_streaming_response(session.id, TEST_USER_ID)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        list(service.stream_response(preparation))
+
+    service.cancel_streaming_response(preparation)
+    assert exc_info.value is expected_error
+    assert turn_repository.list_by_session_for_user(session.id, TEST_USER_ID) == [
+        user_turn
+    ]
+
+    provider.stream.return_value = iter([FAKE_RESPONSE])
+    retry = service.begin_streaming_response(session.id, TEST_USER_ID)
+    result = service.complete_streaming_response(
+        retry,
+        "".join(service.stream_response(retry)),
+    )
+    service.cancel_streaming_response(retry)
+
+    assert result.opponent_turn.turn_number == 2
+
+
+def test_streaming_response_rejects_empty_output_without_persisting() -> None:
+    negotiation_repository = NegotiationRepository()
+    scenario_repository = ScenarioRepository()
+    turn_repository = NegotiationTurnRepository()
+    scenario = _create_scenario(scenario_repository)
+    session = _create_session(negotiation_repository, scenario.scenario_id)
+    user_turn = _create_turn(turn_repository, session.id)
+    service = OpponentService(
+        negotiation_repository,
+        scenario_repository,
+        turn_repository,
+        _create_state_extractor(),
+        OpponentProfileBuilder(),
+        OpponentPromptBuilder(),
+        FakeLLMProvider(),
+        _create_adaptive_context_service(),
+    )
+    preparation = service.begin_streaming_response(session.id, TEST_USER_ID)
+
+    with pytest.raises(EmptyOpponentResponseError):
+        service.complete_streaming_response(preparation, "  ")
+
+    service.cancel_streaming_response(preparation)
+    assert turn_repository.list_by_session_for_user(session.id, TEST_USER_ID) == [
+        user_turn
+    ]
+
+
+def test_only_one_response_may_be_in_flight_for_a_session() -> None:
+    negotiation_repository = NegotiationRepository()
+    scenario_repository = ScenarioRepository()
+    turn_repository = NegotiationTurnRepository()
+    scenario = _create_scenario(scenario_repository)
+    session = _create_session(negotiation_repository, scenario.scenario_id)
+    _create_turn(turn_repository, session.id)
+    service = OpponentService(
+        negotiation_repository,
+        scenario_repository,
+        turn_repository,
+        _create_state_extractor(),
+        OpponentProfileBuilder(),
+        OpponentPromptBuilder(),
+        FakeLLMProvider(),
+        _create_adaptive_context_service(),
+    )
+    preparation = service.begin_streaming_response(session.id, TEST_USER_ID)
+
+    with pytest.raises(OpponentResponseInProgressError):
+        service.begin_streaming_response(session.id, TEST_USER_ID)
+
+    result = service.complete_streaming_response(preparation, FAKE_RESPONSE)
+    service.cancel_streaming_response(preparation)
+    assert turn_repository.list_by_session_for_user(session.id, TEST_USER_ID) == [
+        preparation.user_turn,
+        result.opponent_turn,
+    ]

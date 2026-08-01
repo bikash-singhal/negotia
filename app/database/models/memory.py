@@ -61,12 +61,12 @@ class NegotiatorMemoryModel(Base):
         ),
         nullable=True,
     )
-    recurring_strengths: Mapped[list[str]] = mapped_column(
+    stable_strengths: Mapped[list[str]] = mapped_column(
         JSONB,
         nullable=False,
         default=list,
     )
-    recurring_weaknesses: Mapped[list[str]] = mapped_column(
+    stable_weaknesses: Mapped[list[str]] = mapped_column(
         JSONB,
         nullable=False,
         default=list,
@@ -81,16 +81,9 @@ class NegotiatorMemoryModel(Base):
         nullable=False,
         default=list,
     )
-    priority_focus_areas: Mapped[list[str]] = mapped_column(
-        JSONB,
-        nullable=False,
-        default=list,
-    )
-    recommended_drills: Mapped[list[str]] = mapped_column(
-        JSONB,
-        nullable=False,
-        default=list,
-    )
+    highest_priority_skill: Mapped[str] = mapped_column(Text, nullable=False)
+    next_session_drill: Mapped[str] = mapped_column(Text, nullable=False)
+    progress_summary: Mapped[str] = mapped_column(Text, nullable=False)
     sessions_analyzed: Mapped[int] = mapped_column(Integer, nullable=False)
     confidence: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(

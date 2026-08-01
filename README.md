@@ -16,8 +16,9 @@ Create scenario
   and optional cross-session Memory
 ```
 
-Standalone Coach, debrief, strategy, and memory APIs plus adaptive-difficulty
-capabilities remain future work.
+Standalone Coach, debrief, strategy, Memory-generation, and Memory-history APIs
+plus adaptive-difficulty capabilities remain future work. The authenticated
+latest-Memory read endpoint is implemented for the coaching dashboard.
 
 ## Current status
 
@@ -42,7 +43,8 @@ Memory. A compiled LangGraph workflow now coordinates the completion lifecycle
 through these existing services while NegotiationEngine preserves the API-facing
 result contract. Scenario, negotiation, turn, coach-observation, Debrief, Strategy,
 Memory, and user records are persisted in PostgreSQL through explicit SQLAlchemy
-repositories. None of the AI artifacts has a standalone API.
+repositories. The latest user-scoped Memory has a focused read endpoint; other AI
+artifacts do not have standalone APIs.
 
 ## Current functionality
 
@@ -56,6 +58,10 @@ repositories. None of the AI artifacts has a standalone API.
 - User-scoped negotiation-turn creation and retrieval
 - Ordered turn history for each negotiation session
 - AI opponent-response generation with optional historical Adaptive Context
+- Incremental opponent-response streaming over newline-delimited JSON
+- Authenticated React dashboard with recent practice, concise persisted
+  negotiation takeaways, a latest-Memory coaching snapshot, resumable sessions,
+  saved scenarios, and completion-result navigation
 - Explicit user-triggered negotiation completion
 - Idempotent completion responses with stable Debrief, Strategy, and optional
   Memory identifiers and timestamps
@@ -73,6 +79,9 @@ repositories. None of the AI artifacts has a standalone API.
 - LLM-assisted cross-session negotiator Memory extraction from persisted Debrief
   and Strategy records
 - Immutable PostgreSQL-backed negotiator Memory versions isolated by user
+- Compact Memory V2 profiles with bounded stable patterns, supported trends, one
+  priority skill, one practice drill, and a progress summary
+- Authenticated current-user latest-Memory read endpoint
 - Read-only Adaptive Context projection derived from the latest negotiator Memory
 - Deterministic opponent behavior profiles for each scenario difficulty
 - Scenario-aware system prompts and complete-history user prompts
@@ -94,6 +103,7 @@ repositories. None of the AI artifacts has a standalone API.
 flowchart TD
     API["Versioned FastAPI API"]
     CompletionAPI["Completion API"]
+    MemoryAPI["Latest Memory API"]
     Config["Application configuration"]
     Factory["LLM provider factory"]
     Engine["NegotiationEngine"]
@@ -250,11 +260,13 @@ flowchart TD
     API --> OpponentAPI
     API --> CompletionAPI
     API --> AuthAPI
+    API --> MemoryAPI
     CurrentUser --> ScenarioAPI
     CurrentUser --> SessionAPI
     CurrentUser --> TurnAPI
     CurrentUser --> OpponentAPI
     CurrentUser --> CompletionAPI
+    CurrentUser --> MemoryAPI
     OpponentAPI --> Engine
     CompletionAPI --> Engine
     Engine -->|"request / response result"| OpponentService
@@ -475,8 +487,8 @@ opportunities, risk signals, and a confidence value extracted from the ordered
 conversation. The coach analyzes only the user's behavior, does not participate
 in the negotiation, and persists each observation inside an immutable
 CoachObservationRecord linked to the completed user-opponent exchange.
-When available, the latest Adaptive Context supplies historical focus areas,
-coaching focus, and recurring strengths to guide observation. The prompt requires
+When available, the latest Adaptive Context supplies the highest-priority skill,
+coaching focus, and stable strengths to guide observation. The prompt requires
 current-session evidence and does not treat historical tendencies as proof of
 current behavior.
 
@@ -502,23 +514,32 @@ returned as a strongly typed part of the completion response.
 
 ### Negotiator memory
 
-NegotiatorMemory identifies cross-session strengths, weaknesses, improving
-skills, persistent risks, priority focus areas, and recommended drills using only
-persisted NegotiationDebriefRecord and NegotiationStrategyRecord pairs. Each
-NegotiatorMemoryRecord stores the sorted source session IDs and a UTC creation
-time. Records form an append-only version history scoped to one authenticated
-user. Completion generates a version only when at least two complete artifact
-pairs for that user exist, so the first eligible negotiation can return no Memory. Each
-completion-triggered record retains internal trigger lineage, and repeated
-completion returns that historical version rather than the latest global one.
-Memory still has no public endpoint.
+NegotiatorMemory V2 is a compact coaching profile containing up to three stable
+strengths and weaknesses, up to two improving skills and persistent risks, one
+highest-priority skill, one next-session drill, and one progress summary. It uses
+only persisted NegotiationDebriefRecord and NegotiationStrategyRecord pairs.
+History is ordered oldest to newest by the debrief creation timestamp, with the
+paired strategy timestamp preserving deterministic order when needed; UUIDs do
+not define chronology. The prompt requires semantic synthesis instead of copying
+per-session lists and prohibits unsupported improvement or regression claims.
+Trend language is deliberately cautious with only two sessions.
+
+Each NegotiatorMemoryRecord stores source session IDs in that chronological order
+and a UTC creation time. Records form an append-only version history scoped to one
+authenticated user. Completion generates a version only when at least two
+complete artifact pairs for that user exist, so the first eligible negotiation can
+return no Memory. Each completion-triggered record retains internal trigger
+lineage, and repeated completion returns that historical version rather than the
+latest global one. `GET /api/v1/memory/latest` exposes only the authenticated
+user's latest profile and returns JSON `null` when none exists; it does not mutate
+or expose Memory history.
 
 ### Adaptive context
 
 AdaptiveContext is a read-only runtime projection of the latest
-NegotiatorMemoryRecord. It exposes priority focus areas, improving skills as
-coaching focus, persistent risks as opponent adjustments, and recurring
-strengths. Every projection defensively copies its lists and is rebuilt from the
+NegotiatorMemoryRecord. It exposes the highest-priority skill as its focus area,
+improving skills as coaching focus, persistent risks as opponent adjustments,
+and stable strengths. Every projection defensively copies its lists and is rebuilt from the
 latest Memory rather than cached. CoachService now reads this projection once per
 observation and renders only coaching-relevant fields; no Memory preserves the
 standard Coach prompt. OpponentService independently renders only opponent
@@ -554,6 +575,7 @@ negotia/
 |   |   `-- v1/
 |   |       |-- auth.py
 |   |       |-- health.py
+|   |       |-- memory.py
 |   |       |-- negotiations.py
 |   |       |-- router.py
 |   |       |-- scenarios.py
@@ -655,6 +677,12 @@ artifacts before adding required `user_id` foreign keys. Existing User rows are
 preserved. This avoids silently assigning historical data to an arbitrary user;
 back up any development data that must be retained before upgrading.
 
+The Memory V2 migration clears only pre-release `negotiator_memories` rows and
+their source-lineage rows before replacing the incompatible V1 fields. Users,
+scenarios, negotiations, turns, observations, debriefs, and strategies are
+preserved. Existing Memory profiles are regenerated on a later eligible
+completion rather than guessed into the new schema.
+
 ## LLM provider configuration
 
 The application loads `.env` using UTF-8 encoding. The provider-related defaults
@@ -700,9 +728,16 @@ The API is available at `http://127.0.0.1:8000`.
 
 ## Frontend local development
 
-The initial React frontend supports registration, login, session restoration
-through `/auth/me`, and logout. It does not yet include Scenario or negotiation
-interfaces.
+The React frontend supports registration, login, session restoration through
+`/auth/me`, logout, an authenticated practice dashboard, streamlined scenario
+creation and selection, negotiation recovery and streaming chat, explicit
+completion, and user-focused Debrief, Strategy, and optional Memory results.
+The dashboard reads the authenticated user's latest persisted Memory as a compact
+Coaching Snapshot and refreshes it without a full page reload. Recent completed
+negotiations reuse the idempotent completion endpoint, cache those persisted
+results in React state, and derive one takeaway from the first missed opportunity,
+first repeated weakness, or overall assessment, in that order. This adds no LLM
+call for an already completed negotiation.
 
 Install Node.js and pnpm, start the API locally, then run these commands in
 Windows PowerShell:
@@ -721,7 +756,12 @@ source code:
 VITE_API_BASE_URL=http://localhost:8000/api/v1
 ```
 
-Open `http://localhost:5173`. The backend allows that Vite origin by default;
+Open `http://localhost:5173`. After signing in, create or select a scenario,
+start a negotiation, exchange messages, and explicitly complete it to view the
+generated results. Recent negotiations can be reopened after a browser refresh;
+the backend remains the source of truth for sessions and turns.
+
+The backend allows the Vite origin by default;
 additional trusted origins can be configured with the backend `CORS_ORIGINS`
 setting as a JSON array.
 
@@ -863,6 +903,7 @@ Do not add `--volumes` to that command. PostgreSQL data remains in the
 | `POST` | `/api/v1/auth/register` | Register a user with a unique username. |
 | `POST` | `/api/v1/auth/login` | Authenticate and receive an expiring bearer token. |
 | `GET` | `/api/v1/auth/me` | Retrieve the authenticated user. |
+| `GET` | `/api/v1/memory/latest` | Retrieve the authenticated user's latest compact Memory, or `null`. |
 | `POST` | `/api/v1/scenarios` | Create a scenario. |
 | `GET` | `/api/v1/scenarios` | List scenarios. |
 | `GET` | `/api/v1/scenarios/{scenario_id}` | Retrieve a scenario. |
@@ -873,6 +914,7 @@ Do not add `--volumes` to that command. PostgreSQL data remains in the
 | `GET` | `/api/v1/turns/{turn_id}` | Retrieve a turn. |
 | `GET` | `/api/v1/negotiations/{session_id}/turns` | Retrieve ordered session history. |
 | `POST` | `/api/v1/negotiations/{session_id}/opponent-response` | Generate and store the next opponent turn. |
+| `POST` | `/api/v1/negotiations/{session_id}/opponent-response/stream` | Stream and then store the next opponent turn. |
 | `POST` | `/api/v1/negotiations/{session_id}/complete` | Explicitly complete a negotiation and return its persisted Debrief, Strategy, and optional Memory. |
 
 Health, registration, and login are public. Every other endpoint in the table
@@ -893,7 +935,8 @@ reported as not found, matching the public behavior for a nonexistent resource.
 
 The opponent-response endpoint requires an existing user turn. It returns `409`
 when there is no user turn or when the latest turn already belongs to the
-opponent.
+opponent. The streaming alternative emits newline-delimited JSON events and
+persists the opponent turn only after provider streaming finishes successfully.
 
 The completion endpoint requires at least one completed user-opponent exchange,
 an opponent latest turn, and a persisted coach observation. Repeated successful
@@ -944,15 +987,16 @@ uv run ruff format --check .
   checkpointing, conditional branches, retries, streaming, or human-in-the-loop
   controls.
 - Strategies are persisted in PostgreSQL and have no standalone retrieval API.
-- Negotiator Memory is versioned and user-scoped in PostgreSQL but has no
-  standalone API.
+- Negotiator Memory is versioned and user-scoped in PostgreSQL; only its latest
+  profile is exposed, with no generation or history API.
 - Authentication uses bearer access tokens only; refresh tokens, revocation,
   password reset, email verification, roles, and administrative APIs are not yet
   implemented.
 - Adaptive difficulty is not implemented.
 - Opponent quality depends on the selected provider, model, scenario data, and
   prompt design.
-- The current backend does not include a web frontend.
+- The web frontend is currently a local Vite application; production frontend
+  hosting is not yet implemented.
 - A single-instance EC2 Compose configuration and operating scripts are included,
   but no AWS infrastructure has been provisioned and HTTPS, domain routing,
   automated off-instance backups, and multi-instance deployment are not configured.
@@ -990,15 +1034,19 @@ Completed:
 - [x] Username/password authentication with bcrypt and expiring JWT access tokens
 - [x] Per-user negotiation-resource ownership and authorization
 - [x] User-isolated Negotiator Memory and Adaptive Context
+- [x] Compact Negotiator Memory V2 and authenticated dashboard Coaching Snapshot
+- [x] Persisted per-negotiation dashboard takeaways and full-review navigation
 - [x] Completion-scoped Unit of Work with LLM generation outside the transaction
+- [x] Authenticated React practice dashboard, streaming negotiation workspace,
+  and completion results
 
 Planned:
 
 - [ ] Richer multi-round opponent behavior
-- [ ] Standalone Coach, debrief, strategy, and memory APIs
+- [ ] Standalone Coach, debrief, strategy, Memory-generation, and Memory-history APIs
 - [ ] Adaptive difficulty
 - [ ] Durable editable user profiles beyond authentication identity
-- [ ] Web frontend and production deployment
+- [ ] Production frontend deployment
 
 ## License status
 

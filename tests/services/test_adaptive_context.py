@@ -21,12 +21,13 @@ def _create_memory_record(
         user_id=user_id,
         trigger_session_id=uuid4(),
         memory=NegotiatorMemory(
-            recurring_strengths=["Uses conditional concessions."],
-            recurring_weaknesses=["Anchors before discovery."],
+            stable_strengths=["Uses conditional concessions."],
+            stable_weaknesses=["Anchors before discovery."],
             improving_skills=["Active listening"],
             persistent_risks=["Makes unilateral concessions."],
-            priority_focus_areas=[focus_area],
-            recommended_drills=["Practice five discovery questions."],
+            highest_priority_skill=focus_area,
+            next_session_drill="Practice five discovery questions.",
+            progress_summary="Discovery is improving; anchoring needs work.",
             sessions_analyzed=2,
             confidence="medium",
         ),
@@ -60,8 +61,8 @@ def test_get_context_projects_only_confirmed_memory_fields() -> None:
         opponent_adjustments=["Makes unilateral concessions."],
         strengths=["Uses conditional concessions."],
     )
-    assert record.memory.recurring_weaknesses == ["Anchors before discovery."]
-    assert record.memory.recommended_drills == ["Practice five discovery questions."]
+    assert record.memory.stable_weaknesses == ["Anchors before discovery."]
+    assert record.memory.next_session_drill == "Practice five discovery questions."
 
 
 def test_projection_defensively_copies_every_list() -> None:
@@ -73,12 +74,12 @@ def test_projection_defensively_copies_every_list() -> None:
     result = service.get_context(TEST_USER_ID)
 
     assert result is not None
-    assert result.focus_areas is not record.memory.priority_focus_areas
+    assert result.focus_areas == [record.memory.highest_priority_skill]
     assert result.coaching_focus is not record.memory.improving_skills
     assert result.opponent_adjustments is not record.memory.persistent_risks
-    assert result.strengths is not record.memory.recurring_strengths
+    assert result.strengths is not record.memory.stable_strengths
     result.focus_areas.append("New runtime focus")
-    assert record.memory.priority_focus_areas == ["Diagnostic questioning"]
+    assert record.memory.highest_priority_skill == "Diagnostic questioning"
 
 
 def test_mapping_is_deterministic_without_caching() -> None:

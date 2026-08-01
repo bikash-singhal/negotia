@@ -63,6 +63,13 @@ def test_system_prompt_requires_cross_session_strict_json_memory() -> None:
 
     assert "cross-session patterns" in prompt
     assert "one isolated observation" in prompt
+    assert "chronological order" in prompt
+    assert "oldest to newest" in prompt
+    assert "Semantically synthesize equivalent observations" in prompt
+    assert "Do not claim improvement or regression" in prompt
+    assert "Do not repeat the same concept" in prompt
+    assert "at most 3 strings each" in prompt
+    assert "at most 2 strings each" in prompt
     assert "Do not invent evidence" in prompt
     assert "sessions_analyzed" in prompt
     assert "exact number of supplied sessions" in prompt
@@ -88,8 +95,8 @@ def test_user_prompt_distinguishes_sessions_and_contains_only_artifacts() -> Non
     )
 
     assert "Persisted artifacts from 2 negotiation sessions" in prompt
-    assert "Session 1" in prompt
-    assert "Session 2" in prompt
+    assert "Session 1 — oldest" in prompt
+    assert "Session 2 — newest" in prompt
     assert str(first[0].session_id) in prompt
     assert str(second[0].session_id) in prompt
     assert first[0].debrief.overall_assessment in prompt

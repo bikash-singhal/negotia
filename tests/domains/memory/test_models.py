@@ -11,12 +11,13 @@ from tests.ownership import TEST_USER_ID
 
 def _valid_memory_data() -> dict[str, object]:
     return {
-        "recurring_strengths": ["Uses conditional concessions."],
-        "recurring_weaknesses": ["Anchors before discovery."],
+        "stable_strengths": ["Uses conditional concessions."],
+        "stable_weaknesses": ["Anchors before discovery."],
         "improving_skills": ["Active listening"],
         "persistent_risks": ["Makes unilateral concessions."],
-        "priority_focus_areas": ["Diagnostic questioning"],
-        "recommended_drills": ["Practice five discovery questions."],
+        "highest_priority_skill": "Diagnostic questioning",
+        "next_session_drill": "Practice five discovery questions.",
+        "progress_summary": "Discovery is improving; anchoring needs work.",
         "sessions_analyzed": 2,
         "confidence": "medium",
     }
@@ -27,7 +28,7 @@ def test_negotiator_memory_validates_strict_complete_data() -> None:
 
     assert memory.sessions_analyzed == 2
     assert memory.confidence == "medium"
-    assert memory.recurring_strengths == ["Uses conditional concessions."]
+    assert memory.stable_strengths == ["Uses conditional concessions."]
 
 
 def test_negotiator_memory_rejects_extra_fields() -> None:
@@ -44,6 +45,38 @@ def test_negotiator_memory_rejects_invalid_session_counts(
 ) -> None:
     data = _valid_memory_data()
     data["sessions_analyzed"] = sessions_analyzed
+
+    with pytest.raises(ValidationError):
+        NegotiatorMemory.model_validate(data)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "maximum"),
+    [
+        ("stable_strengths", 3),
+        ("stable_weaknesses", 3),
+        ("improving_skills", 2),
+        ("persistent_risks", 2),
+    ],
+)
+def test_negotiator_memory_enforces_bounded_lists(
+    field_name: str,
+    maximum: int,
+) -> None:
+    data = _valid_memory_data()
+    data[field_name] = [f"Item {index}" for index in range(maximum + 1)]
+
+    with pytest.raises(ValidationError):
+        NegotiatorMemory.model_validate(data)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["highest_priority_skill", "next_session_drill", "progress_summary"],
+)
+def test_negotiator_memory_requires_compact_coaching_text(field_name: str) -> None:
+    data = _valid_memory_data()
+    data.pop(field_name)
 
     with pytest.raises(ValidationError):
         NegotiatorMemory.model_validate(data)

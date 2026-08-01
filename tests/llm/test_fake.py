@@ -87,7 +87,8 @@ def test_generate_returns_deterministic_memory_json() -> None:
     )
 
     assert first_response == second_response
-    assert '"recurring_strengths"' in first_response
+    assert '"stable_strengths"' in first_response
+    assert '"highest_priority_skill"' in first_response
     assert '"sessions_analyzed": 2' in first_response
 
 
@@ -98,3 +99,14 @@ def test_memory_response_uses_supplied_session_count() -> None:
     )
 
     assert '"sessions_analyzed": 3' in response
+
+
+def test_stream_returns_deterministic_chunks() -> None:
+    provider = FakeLLMProvider()
+
+    first_chunks = list(provider.stream("system", "user"))
+    second_chunks = list(provider.stream("different", "prompts"))
+
+    assert first_chunks == second_chunks
+    assert len(first_chunks) > 1
+    assert "".join(first_chunks) == EXPECTED_RESPONSE

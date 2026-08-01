@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from datetime import datetime
+from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -7,13 +8,21 @@ from fastapi.testclient import TestClient
 
 from app.domains.scenario.repository import ScenarioRepository
 from app.domains.scenario.service import ScenarioService
+from app.llm.fake import FakeLLMProvider
+from app.llm.provider import LLMProvider
 from app.main import app
+from app.prompts.scenario import ScenarioPromptBuilder
+from app.services.scenario import ScenarioGenerator
 from tests.api.v1.authentication import authenticated_request
+from tests.ownership import TEST_USER_ID
 
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
-    app.state.scenario_service = ScenarioService(ScenarioRepository())
+    app.state.scenario_service = ScenarioService(
+        ScenarioRepository(),
+        ScenarioGenerator(ScenarioPromptBuilder(), FakeLLMProvider()),
+    )
     with authenticated_request(), TestClient(app) as test_client:
         yield test_client
 
@@ -22,15 +31,7 @@ def _valid_scenario_data() -> dict[str, object]:
     return {
         "title": "Supplier contract renewal",
         "description": "Renegotiate the annual supplier contract and delivery terms.",
-        "industry": "Manufacturing",
-        "opponent_role": "Supplier account director",
-        "objective": "Secure improved pricing and delivery guarantees.",
         "difficulty": "intermediate",
-        "constraints": ["Annual budget cannot increase"],
-        "personality": "Analytical and cautious",
-        "negotiation_style": "Collaborative",
-        "hidden_context": ["The supplier recently lost a major client"],
-        "walk_away_conditions": ["Price increase above five percent"],
     }
 
 
@@ -60,18 +61,14 @@ def test_create_scenario_returns_all_public_fields(client: TestClient) -> None:
         "created_at",
         "updated_at",
     }
-    for field in (
-        "title",
-        "description",
-        "industry",
-        "opponent_role",
-        "objective",
-        "difficulty",
-        "constraints",
-        "personality",
-        "negotiation_style",
-    ):
+    for field in ("title", "description", "difficulty"):
         assert data[field] == request_data[field]
+    assert data["industry"] == "Technology"
+    assert data["opponent_role"] == "Recruiter"
+    assert data["objective"]
+    assert data["personality"]
+    assert data["negotiation_style"]
+    assert data["constraints"]
 
 
 def test_create_scenario_excludes_private_fields(client: TestClient) -> None:
@@ -99,6 +96,40 @@ def test_create_scenario_rejects_invalid_request(client: TestClient) -> None:
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_create_scenario_rejects_user_id(client: TestClient) -> None:
+    request_data = _valid_scenario_data()
+    request_data["user_id"] = str(uuid4())
+
+    response = client.post("/api/v1/scenarios", json=request_data)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
+@pytest.mark.parametrize("provider_response", ["", "not-json", "{}"])
+def test_create_scenario_returns_safe_bad_gateway_for_invalid_generation(
+    provider_response: str,
+) -> None:
+    repository = ScenarioRepository()
+    provider = MagicMock(spec=LLMProvider)
+    provider.generate.return_value = provider_response
+    app.state.scenario_service = ScenarioService(
+        repository,
+        ScenarioGenerator(ScenarioPromptBuilder(), provider),
+    )
+
+    with authenticated_request(), TestClient(app) as test_client:
+        response = test_client.post(
+            "/api/v1/scenarios",
+            json=_valid_scenario_data(),
+        )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "http_error"
+    assert "not-json" not in response.text
+    assert repository.list_for_user(TEST_USER_ID) == []
 
 
 def test_list_scenarios_returns_empty_list_initially(client: TestClient) -> None:

@@ -30,6 +30,7 @@ from app.prompts.debrief import DebriefPromptBuilder
 from app.prompts.memory import MemoryPromptBuilder
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
+from app.prompts.scenario import ScenarioPromptBuilder
 from app.prompts.strategy import StrategyPromptBuilder
 from app.security.passwords import PasswordHasher
 from app.security.tokens import AccessTokenManager
@@ -40,6 +41,7 @@ from app.services.memory import MemoryExtractor, MemoryService
 from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
+from app.services.scenario import ScenarioGenerator
 from app.services.strategy import StrategyExtractor, StrategyService
 from app.workflows.completion.service import CompletionWorkflowService
 
@@ -75,6 +77,10 @@ scenario_repository = SQLScenarioRepository()
 negotiation_repository = SQLNegotiationRepository()
 turn_repository = SQLNegotiationTurnRepository()
 llm_provider = build_llm_provider(settings)
+scenario_generator = ScenarioGenerator(
+    ScenarioPromptBuilder(),
+    llm_provider,
+)
 state_extractor = NegotiationStateExtractor(
     NegotiationStatePromptBuilder(),
     llm_provider,
@@ -132,7 +138,11 @@ coach_service = CoachService(
     coach_observation_repository,
     adaptive_context_service,
 )
-app.state.scenario_service = ScenarioService(scenario_repository)
+scenario_service = ScenarioService(
+    scenario_repository,
+    scenario_generator,
+)
+app.state.scenario_service = scenario_service
 negotiation_service = NegotiationService(
     negotiation_repository,
     scenario_repository,

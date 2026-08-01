@@ -15,8 +15,8 @@ class AdaptiveContextService:
 
         memory = record.memory
         return AdaptiveContext(
-            focus_areas=list(memory.priority_focus_areas),
+            focus_areas=[memory.highest_priority_skill],
             coaching_focus=list(memory.improving_skills),
             opponent_adjustments=list(memory.persistent_risks),
-            strengths=list(memory.recurring_strengths),
+            strengths=list(memory.stable_strengths),
         )

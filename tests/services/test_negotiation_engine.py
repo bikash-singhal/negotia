@@ -37,7 +37,11 @@ from app.services.negotiation_engine import (
     NegotiationCompletionResult,
     NegotiationEngine,
 )
-from app.services.opponent import OpponentResponseResult, OpponentService
+from app.services.opponent import (
+    OpponentResponsePreparation,
+    OpponentResponseResult,
+    OpponentService,
+)
 from app.services.strategy import StrategyService
 from app.workflows.completion.service import CompletionWorkflowService
 from app.workflows.completion.state import CompletionWorkflowResult
@@ -129,12 +133,13 @@ def _create_memory_record(session_id: UUID) -> NegotiatorMemoryRecord:
         user_id=TEST_USER_ID,
         trigger_session_id=session_id,
         memory=NegotiatorMemory(
-            recurring_strengths=[],
-            recurring_weaknesses=[],
+            stable_strengths=[],
+            stable_weaknesses=[],
             improving_skills=[],
             persistent_risks=[],
-            priority_focus_areas=[],
-            recommended_drills=[],
+            highest_priority_skill="Diagnostic questioning",
+            next_session_drill="Practice five discovery questions.",
+            progress_summary="Cross-session patterns are still emerging.",
             sessions_analyzed=2,
             confidence="low",
         ),
@@ -362,6 +367,99 @@ def test_engine_calls_opponent_before_coach() -> None:
     engine.generate_response(session_id, TEST_USER_ID)
 
     assert call_order == ["opponent", "coach"]
+
+
+def test_stream_persists_response_before_coaching_completed_exchange() -> None:
+    session_id = uuid4()
+    user_turn = _create_turn(
+        session_id,
+        1,
+        NegotiationTurnSpeaker.USER,
+        "We need a ten percent reduction.",
+    )
+    opponent_turn = _create_turn(
+        session_id,
+        2,
+        NegotiationTurnSpeaker.OPPONENT,
+        "We can consider a smaller adjustment.",
+    )
+    preparation = OpponentResponsePreparation(
+        session_id=session_id,
+        user_id=TEST_USER_ID,
+        lease_id=uuid4(),
+        user_turn=user_turn,
+        conversation_turns=[user_turn],
+        system_prompt="system prompt",
+        user_prompt="user prompt",
+    )
+    result = OpponentResponseResult(
+        user_turn=user_turn,
+        opponent_turn=opponent_turn,
+        conversation_turns=[user_turn, opponent_turn],
+    )
+    call_order: list[str] = []
+    opponent_service = MagicMock(spec=OpponentService)
+    opponent_service.begin_streaming_response.return_value = preparation
+    opponent_service.stream_response.return_value = iter(["First ", "response."])
+    opponent_service.complete_streaming_response.side_effect = lambda *_args: (
+        call_order.append("persist") or result
+    )
+    coach_service = MagicMock(spec=CoachService)
+    coach_service.analyze_exchange.side_effect = lambda *_args: (
+        call_order.append("coach") or None
+    )
+    engine = _build_engine(opponent_service, coach_service)
+
+    response_stream = engine.start_response_stream(session_id, TEST_USER_ID)
+    generated_content = "".join(response_stream.chunks())
+    completed_turn = response_stream.complete(generated_content)
+
+    assert generated_content == "First response."
+    assert completed_turn is opponent_turn
+    assert call_order == ["persist", "coach"]
+    opponent_service.complete_streaming_response.assert_called_once_with(
+        preparation,
+        generated_content,
+    )
+    coach_service.analyze_exchange.assert_called_once_with(
+        session_id,
+        TEST_USER_ID,
+        [user_turn, opponent_turn],
+        user_turn,
+        opponent_turn,
+    )
+    opponent_service.cancel_streaming_response.assert_called_once_with(preparation)
+
+
+def test_closing_stream_before_completion_does_not_persist_or_coach() -> None:
+    session_id = uuid4()
+    user_turn = _create_turn(
+        session_id,
+        1,
+        NegotiationTurnSpeaker.USER,
+        "We need a ten percent reduction.",
+    )
+    preparation = OpponentResponsePreparation(
+        session_id=session_id,
+        user_id=TEST_USER_ID,
+        lease_id=uuid4(),
+        user_turn=user_turn,
+        conversation_turns=[user_turn],
+        system_prompt="system prompt",
+        user_prompt="user prompt",
+    )
+    opponent_service = MagicMock(spec=OpponentService)
+    opponent_service.begin_streaming_response.return_value = preparation
+    coach_service = MagicMock(spec=CoachService)
+    engine = _build_engine(opponent_service, coach_service)
+
+    response_stream = engine.start_response_stream(session_id, TEST_USER_ID)
+    response_stream.close()
+    response_stream.close()
+
+    opponent_service.complete_streaming_response.assert_not_called()
+    coach_service.analyze_exchange.assert_not_called()
+    opponent_service.cancel_streaming_response.assert_called_once_with(preparation)
 
 
 def test_opponent_service_has_no_coach_dependency() -> None:

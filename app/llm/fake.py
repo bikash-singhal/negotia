@@ -1,3 +1,6 @@
+from collections.abc import Iterator
+
+
 class FakeLLMProvider:
     def generate(
         self,
@@ -6,6 +9,25 @@ class FakeLLMProvider:
         *,
         temperature: float | None = None,
     ) -> str:
+        if system_prompt.startswith(
+            "You generate structured negotiation scenario details"
+        ):
+            return (
+                '{"industry": "Technology", '
+                '"opponent_role": "Recruiter", '
+                '"objective": "Improve the total compensation package while '
+                'preserving the offer.", '
+                '"personality": "Professional, pragmatic, and attentive to '
+                'internal compensation bands.", '
+                '"negotiation_style": "Collaborative and evidence-driven", '
+                '"constraints": ["Compensation must remain within the approved '
+                'level range."], '
+                '"hidden_context": ["There is limited flexibility in base salary '
+                'but more flexibility in equity."], '
+                '"walk_away_conditions": ["The candidate makes an ultimatum or '
+                'rejects all package components."]}'
+            )
+
         if system_prompt.startswith("You are an expert negotiation memory analyst"):
             session_count = 2
             history_prefix = "Persisted artifacts from "
@@ -16,12 +38,13 @@ class FakeLLMProvider:
                 if rendered_count.isdigit():
                     session_count = int(rendered_count)
             return (
-                '{"recurring_strengths": ["Uses conditional concessions."], '
-                '"recurring_weaknesses": ["Anchors before gathering information."], '
+                '{"stable_strengths": ["Uses conditional concessions."], '
+                '"stable_weaknesses": ["Anchors before gathering information."], '
                 '"improving_skills": ["Concession planning"], '
                 '"persistent_risks": ["Makes unilateral concessions."], '
-                '"priority_focus_areas": ["Diagnostic questioning"], '
-                '"recommended_drills": ["Practice five discovery questions."], '
+                '"highest_priority_skill": "Diagnostic questioning", '
+                '"next_session_drill": "Practice five discovery questions.", '
+                '"progress_summary": "Concession planning is improving, but discovery must become more consistent.", '
                 f'"sessions_analyzed": {session_count}, '
                 '"confidence": "medium"}'
             )
@@ -86,3 +109,19 @@ class FakeLLMProvider:
             "I understand your position, but those terms are difficult for us "
             "to accept."
         )
+
+    def stream(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float | None = None,
+    ) -> Iterator[str]:
+        response = self.generate(
+            system_prompt,
+            user_prompt,
+            temperature=temperature,
+        )
+        chunk_size = 16
+        for start in range(0, len(response), chunk_size):
+            yield response[start : start + chunk_size]

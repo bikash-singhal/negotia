@@ -28,7 +28,9 @@ from app.main import (
     negotiation_service,
     negotiation_turn_service,
     opponent_service,
+    scenario_generator,
     scenario_repository,
+    scenario_service,
     state_extractor,
     strategy_extractor,
     strategy_repository,
@@ -44,6 +46,7 @@ from app.services.memory import MemoryExtractor, MemoryService
 from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
+from app.services.scenario import ScenarioGenerator
 from app.services.strategy import StrategyExtractor, StrategyService
 from app.workflows.completion.service import CompletionWorkflowService
 
@@ -69,6 +72,7 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     assert isinstance(memory_service, MemoryService)
     assert isinstance(negotiation_engine, NegotiationEngine)
     assert isinstance(state_extractor, NegotiationStateExtractor)
+    assert isinstance(scenario_generator, ScenarioGenerator)
     assert isinstance(strategy_extractor, StrategyExtractor)
     assert isinstance(strategy_service, StrategyService)
     assert isinstance(opponent_service, OpponentService)
@@ -108,6 +112,8 @@ def test_app_builds_llm_services_with_configured_provider() -> None:
     )
     assert app.state.negotiation_engine is negotiation_engine
     assert state_extractor._llm_provider is llm_provider
+    assert scenario_generator._llm_provider is llm_provider
+    assert scenario_service._generator is scenario_generator
     assert opponent_service._state_extractor is state_extractor
     assert opponent_service._turn_repository is turn_repository
     assert opponent_service._llm_provider is llm_provider
@@ -164,10 +170,12 @@ def test_app_has_no_strategy_endpoint() -> None:
     assert all("strategy" not in path for path in route_paths)
 
 
-def test_app_has_no_memory_endpoint() -> None:
+def test_app_registers_latest_memory_endpoint_only() -> None:
     route_paths = app.openapi().get("paths", {})
 
-    assert all("memory" not in path for path in route_paths)
+    memory_paths = [path for path in route_paths if "memory" in path]
+
+    assert memory_paths == ["/api/v1/memory/latest"]
 
 
 def test_app_has_no_adaptive_context_endpoint() -> None:

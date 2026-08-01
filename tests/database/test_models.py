@@ -190,12 +190,10 @@ def test_generated_and_list_fields_use_jsonb() -> None:
     _assert_jsonb_columns(
         "negotiator_memories",
         (
-            "recurring_strengths",
-            "recurring_weaknesses",
+            "stable_strengths",
+            "stable_weaknesses",
             "improving_skills",
             "persistent_risks",
-            "priority_focus_areas",
-            "recommended_drills",
         ),
     )
 

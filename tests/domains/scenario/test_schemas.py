@@ -4,6 +4,7 @@ from pydantic import ValidationError
 from app.domains.scenario.models import Scenario, ScenarioDifficulty
 from app.domains.scenario.schemas import (
     ScenarioCreate,
+    ScenarioGenerateRequest,
     ScenarioInternalResponse,
     ScenarioResponse,
 )
@@ -56,6 +57,32 @@ def test_scenario_create_rejects_invalid_difficulty() -> None:
 
     with pytest.raises(ValidationError):
         ScenarioCreate.model_validate(data)
+
+
+def test_scenario_generate_request_accepts_only_public_input() -> None:
+    request = ScenarioGenerateRequest.model_validate(
+        {
+            "title": "Salary negotiation at Microsoft",
+            "difficulty": "intermediate",
+            "description": "Negotiate an improved compensation package.",
+        }
+    )
+
+    assert request.title == "Salary negotiation at Microsoft"
+    assert request.difficulty is ScenarioDifficulty.INTERMEDIATE
+    assert request.description == "Negotiate an improved compensation package."
+
+
+def test_scenario_generate_request_rejects_user_id() -> None:
+    with pytest.raises(ValidationError):
+        ScenarioGenerateRequest.model_validate(
+            {
+                "title": "Salary negotiation",
+                "difficulty": "intermediate",
+                "description": "Negotiate an improved compensation package.",
+                "user_id": str(TEST_USER_ID),
+            }
+        )
 
 
 def test_scenario_response_excludes_hidden_context() -> None:

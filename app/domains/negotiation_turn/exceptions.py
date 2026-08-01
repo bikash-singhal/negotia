@@ -40,3 +40,12 @@ class EmptyOpponentResponseError(Exception):
             "The LLM provider returned an empty opponent response for negotiation "
             f"session '{session_id}'."
         )
+
+
+class OpponentResponseInProgressError(Exception):
+    def __init__(self, session_id: UUID) -> None:
+        self.session_id = session_id
+        super().__init__(
+            "An opponent response is already being generated for negotiation "
+            f"session '{session_id}'."
+        )

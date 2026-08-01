@@ -27,6 +27,7 @@ from app.prompts.debrief import DebriefPromptBuilder
 from app.prompts.memory import MemoryPromptBuilder
 from app.prompts.negotiation_state import NegotiationStatePromptBuilder
 from app.prompts.opponent import OpponentPromptBuilder
+from app.prompts.scenario import ScenarioPromptBuilder
 from app.prompts.strategy import StrategyPromptBuilder
 from app.services.adaptive_context import AdaptiveContextService
 from app.services.coach import CoachObservationExtractor, CoachService
@@ -35,6 +36,7 @@ from app.services.memory import MemoryExtractor, MemoryService
 from app.services.negotiation_engine import NegotiationEngine
 from app.services.negotiation_state import NegotiationStateExtractor
 from app.services.opponent import OpponentService
+from app.services.scenario import ScenarioGenerator
 from app.services.strategy import StrategyExtractor, StrategyService
 from app.workflows.completion.service import CompletionWorkflowService
 from tests.api.v1.authentication import TEST_USER, authenticated_request
@@ -144,7 +146,10 @@ def completion_context() -> Iterator[CompletionContext]:
         fake_provider,
         adaptive_context_service,
     )
-    app.state.scenario_service = ScenarioService(scenario_repository)
+    app.state.scenario_service = ScenarioService(
+        scenario_repository,
+        ScenarioGenerator(ScenarioPromptBuilder(), fake_provider),
+    )
     app.state.negotiation_service = negotiation_service
     app.state.negotiation_turn_service = turn_service
     app.state.opponent_service = opponent_service
@@ -215,15 +220,7 @@ def _valid_scenario_data() -> dict[str, object]:
     return {
         "title": "Supplier contract renewal",
         "description": "Renegotiate the annual supplier contract and delivery terms.",
-        "industry": "Manufacturing",
-        "opponent_role": "Supplier account director",
-        "objective": "Secure improved pricing and delivery guarantees.",
         "difficulty": "intermediate",
-        "constraints": ["Annual budget cannot increase"],
-        "personality": "Analytical and cautious",
-        "negotiation_style": "Collaborative",
-        "hidden_context": ["The supplier recently lost a major client"],
-        "walk_away_conditions": ["Price increase above five percent"],
     }
 
 
@@ -302,12 +299,16 @@ def _expected_strategy() -> dict[str, object]:
 
 def _expected_memory(session_count: int = 2) -> dict[str, object]:
     return {
-        "recurring_strengths": ["Uses conditional concessions."],
-        "recurring_weaknesses": ["Anchors before gathering information."],
+        "stable_strengths": ["Uses conditional concessions."],
+        "stable_weaknesses": ["Anchors before gathering information."],
         "improving_skills": ["Concession planning"],
         "persistent_risks": ["Makes unilateral concessions."],
-        "priority_focus_areas": ["Diagnostic questioning"],
-        "recommended_drills": ["Practice five discovery questions."],
+        "highest_priority_skill": "Diagnostic questioning",
+        "next_session_drill": "Practice five discovery questions.",
+        "progress_summary": (
+            "Concession planning is improving, but discovery must become more "
+            "consistent."
+        ),
         "sessions_analyzed": session_count,
         "confidence": "medium",
     }
@@ -467,14 +468,14 @@ def test_later_completion_creates_new_memory_version(
     assert versions[0].memory.sessions_analyzed == 2
     assert versions[1].id == third_memory_id
     assert versions[1].memory.sessions_analyzed == 3
-    assert versions[0].source_session_ids == tuple(
-        sorted(
-            (
-                _parse_uuid(first_session["id"]),
-                _parse_uuid(second_session["id"]),
-            ),
-            key=str,
-        )
+    assert versions[0].source_session_ids == (
+        _parse_uuid(first_session["id"]),
+        _parse_uuid(second_session["id"]),
+    )
+    assert versions[1].source_session_ids == (
+        _parse_uuid(first_session["id"]),
+        _parse_uuid(second_session["id"]),
+        _parse_uuid(third_session["id"]),
     )
 
 

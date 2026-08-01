@@ -91,12 +91,13 @@ def _strategy() -> NegotiationStrategy:
 
 def _memory() -> NegotiatorMemory:
     return NegotiatorMemory(
-        recurring_strengths=["States objectives clearly."],
-        recurring_weaknesses=["Concedes before discovery."],
+        stable_strengths=["States objectives clearly."],
+        stable_weaknesses=["Concedes before discovery."],
         improving_skills=["Diagnostic questioning"],
         persistent_risks=["Makes unilateral concessions."],
-        priority_focus_areas=["Concession planning"],
-        recommended_drills=["Prepare conditional trades."],
+        highest_priority_skill="Concession planning",
+        next_session_drill="Prepare conditional trades.",
+        progress_summary="Questioning is improving; concessions remain a risk.",
         sessions_analyzed=2,
         confidence="high",
     )

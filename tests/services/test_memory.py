@@ -36,7 +36,10 @@ from app.services.memory import MemoryExtractor, MemoryService
 from tests.ownership import OTHER_USER_ID, TEST_USER_ID
 
 
-def _create_debrief_record(session_id: UUID) -> NegotiationDebriefRecord:
+def _create_debrief_record(
+    session_id: UUID,
+    created_at: datetime | None = None,
+) -> NegotiationDebriefRecord:
     return NegotiationDebriefRecord(
         id=uuid4(),
         session_id=session_id,
@@ -49,13 +52,14 @@ def _create_debrief_record(session_id: UUID) -> NegotiationDebriefRecord:
             confidence="high",
         ),
         observation_count=2,
-        created_at=datetime.now(UTC),
+        created_at=created_at or datetime.now(UTC),
     )
 
 
 def _create_strategy_record(
     session_id: UUID,
     debrief_id: UUID,
+    created_at: datetime | None = None,
 ) -> NegotiationStrategyRecord:
     return NegotiationStrategyRecord(
         id=uuid4(),
@@ -70,18 +74,19 @@ def _create_strategy_record(
             avoid_next_time=["Avoid unilateral concessions."],
             confidence="high",
         ),
-        created_at=datetime.now(UTC),
+        created_at=created_at or datetime.now(UTC),
     )
 
 
 def _valid_memory() -> NegotiatorMemory:
     return NegotiatorMemory(
-        recurring_strengths=["Uses conditional concessions."],
-        recurring_weaknesses=["Anchors before gathering information."],
+        stable_strengths=["Uses conditional concessions."],
+        stable_weaknesses=["Anchors before gathering information."],
         improving_skills=["Concession planning"],
         persistent_risks=["Makes unilateral concessions."],
-        priority_focus_areas=["Diagnostic questioning"],
-        recommended_drills=["Practice five discovery questions."],
+        highest_priority_skill="Diagnostic questioning",
+        next_session_drill="Practice five discovery questions.",
+        progress_summary="Discovery is improving; anchoring needs work.",
         sessions_analyzed=2,
         confidence="medium",
     )
@@ -89,12 +94,13 @@ def _valid_memory() -> NegotiatorMemory:
 
 def _valid_payload(session_count: int = 2) -> dict[str, object]:
     return {
-        "recurring_strengths": ["Uses conditional concessions."],
-        "recurring_weaknesses": ["Anchors before gathering information."],
+        "stable_strengths": ["Uses conditional concessions."],
+        "stable_weaknesses": ["Anchors before gathering information."],
         "improving_skills": ["Concession planning"],
         "persistent_risks": ["Makes unilateral concessions."],
-        "priority_focus_areas": ["Diagnostic questioning"],
-        "recommended_drills": ["Practice five discovery questions."],
+        "highest_priority_skill": "Diagnostic questioning",
+        "next_session_drill": "Practice five discovery questions.",
+        "progress_summary": "Discovery is improving; anchoring needs work.",
         "sessions_analyzed": session_count,
         "confidence": "medium",
     }
@@ -125,13 +131,24 @@ def _create_matched_records(
     return debriefs, strategies
 
 
-def test_extractor_parses_valid_json_and_sorts_inputs_by_session_id() -> None:
-    first_session_id = UUID("00000000-0000-0000-0000-000000000001")
-    second_session_id = UUID("00000000-0000-0000-0000-000000000002")
-    debriefs, strategies = _create_matched_records(
-        second_session_id,
-        first_session_id,
+def test_extractor_parses_valid_json_and_orders_inputs_chronologically() -> None:
+    older_session_id = UUID("ffffffff-ffff-ffff-ffff-ffffffffffff")
+    newer_session_id = UUID("00000000-0000-0000-0000-000000000001")
+    now = datetime.now(UTC)
+    newer_debrief = _create_debrief_record(newer_session_id, now)
+    older_debrief = _create_debrief_record(
+        older_session_id,
+        now - timedelta(days=1),
     )
+    debriefs = [newer_debrief, older_debrief]
+    strategies = [
+        _create_strategy_record(newer_session_id, newer_debrief.id, now),
+        _create_strategy_record(
+            older_session_id,
+            older_debrief.id,
+            now - timedelta(days=1),
+        ),
+    ]
     extractor, prompt_builder, provider = _build_extractor(json.dumps(_valid_payload()))
 
     result = extractor.extract(debriefs, strategies)
@@ -142,12 +159,12 @@ def test_extractor_parses_valid_json_and_sorts_inputs_by_session_id() -> None:
         prompt_builder.build_user_prompt.call_args.args
     )
     assert [record.session_id for record in ordered_debriefs] == [
-        first_session_id,
-        second_session_id,
+        older_session_id,
+        newer_session_id,
     ]
     assert [record.session_id for record in ordered_strategies] == [
-        first_session_id,
-        second_session_id,
+        older_session_id,
+        newer_session_id,
     ]
     provider.generate.assert_called_once_with(
         system_prompt="memory system prompt",
@@ -195,15 +212,45 @@ def test_extractor_rejects_malformed_json_without_exposing_output() -> None:
 
 
 @pytest.mark.parametrize(
-    "mutate_payload",
+    ("case_name", "mutate_payload"),
     [
-        lambda payload: payload.pop("confidence"),
-        lambda payload: payload.update({"unexpected": "value"}),
-        lambda payload: payload.update({"sessions_analyzed": "2"}),
+        ("missing-confidence", lambda payload: payload.pop("confidence")),
+        ("extra-field", lambda payload: payload.update({"unexpected": "value"})),
+        (
+            "non-strict-session-count",
+            lambda payload: payload.update({"sessions_analyzed": "2"}),
+        ),
+        (
+            "too-many-stable-strengths",
+            lambda payload: payload.update({"stable_strengths": ["item"] * 4}),
+        ),
+        (
+            "too-many-stable-weaknesses",
+            lambda payload: payload.update({"stable_weaknesses": ["item"] * 4}),
+        ),
+        (
+            "too-many-improving-skills",
+            lambda payload: payload.update({"improving_skills": ["item"] * 3}),
+        ),
+        (
+            "missing-highest-priority-skill",
+            lambda payload: payload.pop("highest_priority_skill"),
+        ),
+        (
+            "missing-next-session-drill",
+            lambda payload: payload.pop("next_session_drill"),
+        ),
+        (
+            "missing-progress-summary",
+            lambda payload: payload.pop("progress_summary"),
+        ),
     ],
-    ids=["missing-field", "extra-field", "non-strict-session-count"],
 )
-def test_extractor_rejects_invalid_memory_data(mutate_payload: object) -> None:
+def test_extractor_rejects_invalid_memory_data(
+    case_name: str,
+    mutate_payload: object,
+) -> None:
+    assert case_name
     assert callable(mutate_payload)
     payload = _valid_payload()
     mutate_payload(payload)
@@ -357,8 +404,8 @@ def test_service_generates_and_persists_version_from_two_matched_sessions() -> N
     assert result.trigger_session_id is None
     assert result.memory is memory
     assert result.source_session_ids == (
-        first_session_id,
         second_session_id,
+        first_session_id,
     )
     assert result.created_at.tzinfo is not None
     assert result.created_at.utcoffset() == timedelta(0)
@@ -462,8 +509,8 @@ def test_generate_for_session_persists_completion_lineage() -> None:
     assert result is not None
     assert result.trigger_session_id == trigger_session_id
     assert result.source_session_ids == (
-        first_session_id,
         trigger_session_id,
+        first_session_id,
     )
     assert (
         memory_repository.get_by_trigger_session(trigger_session_id, TEST_USER_ID)
@@ -502,7 +549,7 @@ def test_prepare_for_session_builds_candidate_without_persisting() -> None:
 
     assert result is not None
     assert result.trigger_session_id == trigger_session_id
-    assert result.source_session_ids == (first_session_id, trigger_session_id)
+    assert result.source_session_ids == (trigger_session_id, first_session_id)
     memory_repository.create.assert_not_called()
 
 

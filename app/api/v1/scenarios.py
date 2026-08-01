@@ -4,7 +4,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.dependencies import get_current_user, get_scenario_service
-from app.domains.scenario.schemas import ScenarioCreate, ScenarioResponse
+from app.domains.scenario.exceptions import (
+    EmptyScenarioGenerationResponseError,
+    InvalidScenarioGenerationDataError,
+    InvalidScenarioGenerationJsonError,
+)
+from app.domains.scenario.schemas import ScenarioGenerateRequest, ScenarioResponse
 from app.domains.scenario.service import ScenarioService
 from app.domains.user.models import User
 
@@ -52,9 +57,19 @@ async def get_scenario(
     status_code=status.HTTP_201_CREATED,
 )
 async def create_scenario(
-    request: ScenarioCreate,
+    request: ScenarioGenerateRequest,
     service: Annotated[ScenarioService, Depends(get_scenario_service)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> ScenarioResponse:
-    scenario = service.create_scenario(request, current_user.id)
+    try:
+        scenario = service.generate_scenario(request, current_user.id)
+    except (
+        EmptyScenarioGenerationResponseError,
+        InvalidScenarioGenerationJsonError,
+        InvalidScenarioGenerationDataError,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from None
     return ScenarioResponse.model_validate(scenario)

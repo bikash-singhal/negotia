@@ -6,10 +6,19 @@ if (!configuredApiBaseUrl) {
 
 const apiBaseUrl = configuredApiBaseUrl.replace(/\/+$/, "");
 
+export const SESSION_EXPIRED_MESSAGE =
+  "Your session expired. Please sign in again.";
+
+type AuthenticationFailureHandler = (rejectedToken: string) => void;
+
+let authenticationFailureHandler: AuthenticationFailureHandler | null = null;
+
 interface ApiRequestOptions {
+  accept?: string;
   method?: "GET" | "POST";
   body?: unknown;
   token?: string;
+  signal?: AbortSignal;
 }
 
 interface ErrorEnvelope {
@@ -43,7 +52,35 @@ export async function apiRequest<T>(
   path: string,
   options: ApiRequestOptions = {},
 ): Promise<T> {
-  const headers = new Headers({ Accept: "application/json" });
+  const response = await sendRequest(path, options);
+  const responseBody = await parseResponseBody(response);
+
+  if (!response.ok) {
+    throwResponseError(response, responseBody, options.token);
+  }
+
+  return responseBody as T;
+}
+
+export async function apiStreamRequest(
+  path: string,
+  options: ApiRequestOptions = {},
+): Promise<Response> {
+  const response = await sendRequest(path, options);
+  if (!response.ok) {
+    const responseBody = await parseResponseBody(response);
+    throwResponseError(response, responseBody, options.token);
+  }
+  return response;
+}
+
+async function sendRequest(
+  path: string,
+  options: ApiRequestOptions,
+): Promise<Response> {
+  const headers = new Headers({
+    Accept: options.accept ?? "application/json",
+  });
   if (options.body !== undefined) {
     headers.set("Content-Type", "application/json");
   }
@@ -51,32 +88,24 @@ export async function apiRequest<T>(
     headers.set("Authorization", `Bearer ${options.token}`);
   }
 
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  return fetch(`${apiBaseUrl}${path}`, {
     method: options.method ?? "GET",
     headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    signal: options.signal,
   });
-  const responseBody = await parseResponseBody(response);
+}
 
-  if (!response.ok) {
-    const envelope = isRecord(responseBody)
-      ? (responseBody as ErrorEnvelope)
-      : null;
-    const message =
-      typeof envelope?.error?.message === "string"
-        ? envelope.error.message
-        : `Request failed with status ${response.status}.`;
-    const code =
-      typeof envelope?.error?.code === "string" ? envelope.error.code : null;
-    throw new ApiError(
-      response.status,
-      message,
-      code,
-      envelope?.error?.details,
-    );
-  }
+export function registerAuthenticationFailureHandler(
+  handler: AuthenticationFailureHandler,
+): () => void {
+  authenticationFailureHandler = handler;
 
-  return responseBody as T;
+  return () => {
+    if (authenticationFailureHandler === handler) {
+      authenticationFailureHandler = null;
+    }
+  };
 }
 
 export function toErrorMessage(error: unknown): string {
@@ -97,6 +126,26 @@ async function parseResponseBody(response: Response): Promise<unknown> {
   } catch {
     return text;
   }
+}
+
+function throwResponseError(
+  response: Response,
+  responseBody: unknown,
+  token: string | undefined,
+): never {
+  if (response.status === 401 && token) {
+    authenticationFailureHandler?.(token);
+    throw new ApiError(401, SESSION_EXPIRED_MESSAGE, "session_expired");
+  }
+
+  const envelope = isRecord(responseBody) ? (responseBody as ErrorEnvelope) : null;
+  const message =
+    typeof envelope?.error?.message === "string"
+      ? envelope.error.message
+      : `Request failed with status ${response.status}.`;
+  const code =
+    typeof envelope?.error?.code === "string" ? envelope.error.code : null;
+  throw new ApiError(response.status, message, code, envelope?.error?.details);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -9,14 +9,20 @@ from app.domains.negotiation.repository import NegotiationRepository
 from app.domains.negotiation.service import NegotiationService
 from app.domains.scenario.repository import ScenarioRepository
 from app.domains.scenario.service import ScenarioService
+from app.llm.fake import FakeLLMProvider
 from app.main import app
+from app.prompts.scenario import ScenarioPromptBuilder
+from app.services.scenario import ScenarioGenerator
 from tests.api.v1.authentication import authenticated_request
 
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
     scenario_repository = ScenarioRepository()
-    app.state.scenario_service = ScenarioService(scenario_repository)
+    app.state.scenario_service = ScenarioService(
+        scenario_repository,
+        ScenarioGenerator(ScenarioPromptBuilder(), FakeLLMProvider()),
+    )
     app.state.negotiation_service = NegotiationService(
         NegotiationRepository(),
         scenario_repository,
@@ -29,15 +35,7 @@ def _valid_scenario_data() -> dict[str, object]:
     return {
         "title": "Supplier contract renewal",
         "description": "Renegotiate the annual supplier contract and delivery terms.",
-        "industry": "Manufacturing",
-        "opponent_role": "Supplier account director",
-        "objective": "Secure improved pricing and delivery guarantees.",
         "difficulty": "intermediate",
-        "constraints": ["Annual budget cannot increase"],
-        "personality": "Analytical and cautious",
-        "negotiation_style": "Collaborative",
-        "hidden_context": ["The supplier recently lost a major client"],
-        "walk_away_conditions": ["Price increase above five percent"],
     }
 
 

@@ -3,11 +3,20 @@ import { useState } from "react";
 import { LoginForm } from "./auth/LoginForm";
 import { RegisterForm } from "./auth/RegisterForm";
 import { useAuth } from "./auth/AuthContext";
+import { Workspace } from "./workspace/Workspace";
 
 type AuthMode = "login" | "register";
 
 export default function App() {
-  const { user, isRestoring, login, logout } = useAuth();
+  const {
+    user,
+    accessToken,
+    sessionNotice,
+    isRestoring,
+    login,
+    logout,
+    clearSessionNotice,
+  } = useAuth();
   const [mode, setMode] = useState<AuthMode>("login");
   const [notice, setNotice] = useState("");
 
@@ -21,35 +30,25 @@ export default function App() {
     );
   }
 
-  if (user) {
+  if (user && accessToken) {
     return (
-      <main className="app-shell">
-        <section className="workspace-card" aria-labelledby="workspace-title">
-          <div>
-            <p className="eyebrow">Authenticated workspace</p>
-            <h1 id="workspace-title">Negotia</h1>
-          </div>
-          <p className="welcome-message">
-            Signed in as <strong>{user.username}</strong>
-          </p>
-          <p className="workspace-placeholder">
-            Negotiation workspace coming next.
-          </p>
-          <button className="secondary-button" type="button" onClick={logout}>
-            Log out
-          </button>
-        </section>
-      </main>
+      <Workspace
+        username={user.username}
+        token={accessToken}
+        onLogout={logout}
+      />
     );
   }
 
   function selectMode(nextMode: AuthMode) {
     setMode(nextMode);
     setNotice("");
+    clearSessionNotice();
   }
 
   function handleRegistered(username: string) {
     setMode("login");
+    clearSessionNotice();
     setNotice(`Account for ${username} created. Sign in to continue.`);
   }
 
@@ -83,9 +82,14 @@ export default function App() {
           </button>
         </div>
 
-        {notice ? (
-          <p className="form-message success-message" role="status">
-            {notice}
+        {sessionNotice || notice ? (
+          <p
+            className={`form-message ${
+              sessionNotice ? "error-message" : "success-message"
+            }`}
+            role={sessionNotice ? "alert" : "status"}
+          >
+            {sessionNotice || notice}
           </p>
         ) : null}
 

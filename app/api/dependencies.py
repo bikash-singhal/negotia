@@ -9,6 +9,7 @@ from app.domains.scenario.service import ScenarioService
 from app.domains.user.exceptions import InvalidAccessTokenError
 from app.domains.user.models import User
 from app.domains.user.service import UserService
+from app.services.memory import MemoryService
 from app.services.negotiation_engine import NegotiationEngine
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -35,6 +36,10 @@ def get_negotiation_engine(request: Request) -> NegotiationEngine:
 
 def get_user_service(request: Request) -> UserService:
     return cast(UserService, request.app.state.user_service)
+
+
+def get_memory_service(request: Request) -> MemoryService:
+    return cast(MemoryService, request.app.state.memory_service)
 
 
 def get_current_user(

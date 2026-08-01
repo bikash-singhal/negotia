@@ -11,7 +11,8 @@ from app.llm.fake import FakeLLMProvider
 def test_default_selection_returns_fake_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.setenv("LLM_PROVIDER", "fake")
+
     settings = Settings()
 
     provider = build_llm_provider(settings)
