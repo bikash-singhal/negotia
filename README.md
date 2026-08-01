@@ -101,12 +101,17 @@ artifacts do not have standalone APIs.
 
 ```mermaid
 flowchart TD
+    Browser["Browser"]
+    Frontend["Nginx frontend container<br/>React SPA and /api reverse proxy"]
     API["Versioned FastAPI API"]
     CompletionAPI["Completion API"]
     MemoryAPI["Latest Memory API"]
     Config["Application configuration"]
     Factory["LLM provider factory"]
     Engine["NegotiationEngine"]
+
+    Browser -->|"HTTP :80"| Frontend
+    Frontend -->|"same-origin /api/*"| API
 
     subgraph Completion["Completion workflow"]
         CompletionWorkflow["CompletionWorkflowService"]
@@ -634,6 +639,14 @@ negotia/
 |-- alembic/
 |-- docker/
 |   `-- entrypoint.sh
+|-- frontend/
+|   |-- src/
+|   |-- .dockerignore
+|   |-- .env.example
+|   |-- Dockerfile
+|   |-- nginx.conf
+|   |-- package.json
+|   `-- pnpm-lock.yaml
 |-- scripts/
 |   |-- backup-postgres.sh
 |   `-- deploy-ec2.sh
@@ -826,8 +839,12 @@ PostgreSQL data is stored in the `negotia_postgres_data` named volume. Do not us
 ## Single-instance EC2 deployment
 
 The repository includes a minimal production Compose override for one Ubuntu EC2
-instance running the API and PostgreSQL as separate containers. It does not
-configure HTTPS, a domain, a load balancer, or multi-instance orchestration.
+instance running the Nginx frontend, FastAPI application, and PostgreSQL as
+separate containers. Nginx serves the compiled React SPA and proxies same-origin
+`/api/*` requests to the internal API service. Only the frontend publishes a host
+port; the API and PostgreSQL remain reachable only on the Compose network. This
+deployment does not configure HTTPS, a domain, a load balancer, or multi-instance
+orchestration.
 
 Install Docker Engine with the Docker Compose plugin on the instance, then clone
 the repository and create the production environment file:
@@ -840,8 +857,10 @@ chmod 600 .env.production
 ```
 
 Replace `POSTGRES_PASSWORD` and `JWT_SECRET_KEY` with strong random values, then
-confirm the Bedrock model and AWS region. Do not add AWS access keys, secret keys,
-or `AWS_PROFILE`.
+confirm the Bedrock model and AWS region. Keep `VITE_API_BASE_URL=/api/v1` so the
+production browser uses the Nginx same-origin proxy. Do not add AWS access keys,
+secret keys, or `AWS_PROFILE`.
+
 Attach an EC2 IAM role that grants only the required Amazon Bedrock model-invocation
 permissions; boto3 will obtain temporary credentials from that role through the
 default AWS credential chain. Local `~/.aws` files are neither mounted nor copied
@@ -850,9 +869,20 @@ into the API image.
 Configure the EC2 Security Group conservatively:
 
 - Allow SSH port 22 only from the administrator's trusted IP address.
-- Allow TCP port 8000 only from clients that need API access.
-- Do not open PostgreSQL port 5432. The production override removes its host-port
-  publication, so PostgreSQL remains reachable only through the Compose network.
+- Allow TCP port 80 only from clients that need web access.
+- Do not open API port 8000 or PostgreSQL port 5432. The production override
+  removes both host-port publications.
+
+After deployment, open `http://<ec2-public-ip>/`. Browser API requests use
+`/api/v1` on that same origin and Nginx proxies them to `api:8000`. The proxy keeps
+HTTP/1.1 enabled and response buffering disabled so streaming opponent responses
+are delivered incrementally. Production does not need a cross-origin CORS
+allowance for this browser path.
+
+The default FastAPI `/docs` and `/openapi.json` routes are intentionally not
+proxied by the production Nginx configuration. Inspect them through the local
+development stack at `http://127.0.0.1:8000/docs`; do not open port 8000 on EC2
+just to expose API documentation.
 
 Deploy or safely update the current Git branch with:
 
@@ -861,21 +891,26 @@ bash scripts/deploy-ec2.sh
 ```
 
 The script verifies Docker and Compose, requires `.env.production`, performs a
-fast-forward-only pull, builds the API image, starts the stack, waits for healthy
-services, and prints service status. On startup failure it prints recent API logs.
-It never removes the PostgreSQL volume.
+fast-forward-only pull, validates the merged Compose configuration, builds the API
+and frontend images, starts the stack, waits for healthy services, and prints
+service status. On startup failure it prints recent frontend, API, and database
+logs. It never removes the PostgreSQL volume.
 
 Use the production Compose files for operational commands:
 
 ```bash
 docker compose --env-file .env.production -f compose.yaml -f compose.production.yaml ps
-docker compose --env-file .env.production -f compose.yaml -f compose.production.yaml logs -f api
-docker compose --env-file .env.production -f compose.yaml -f compose.production.yaml restart api
+docker compose --env-file .env.production -f compose.yaml -f compose.production.yaml logs -f frontend api
+docker compose --env-file .env.production -f compose.yaml -f compose.production.yaml restart frontend api
 ```
 
 Every API container startup runs `uv run alembic upgrade head` before Uvicorn.
 Uvicorn starts only when migrations succeed. The API container also waits for the
 PostgreSQL health check before starting.
+
+For a safe update, create a database backup first, then run the deployment script.
+Its fast-forward-only Git pull avoids silently merging divergent server changes,
+and Compose rebuilds both deployable images before replacing containers.
 
 Create a timestamped logical PostgreSQL backup without deleting older backups:
 
@@ -995,8 +1030,6 @@ uv run ruff format --check .
 - Adaptive difficulty is not implemented.
 - Opponent quality depends on the selected provider, model, scenario data, and
   prompt design.
-- The web frontend is currently a local Vite application; production frontend
-  hosting is not yet implemented.
 - A single-instance EC2 Compose configuration and operating scripts are included,
   but no AWS infrastructure has been provisioned and HTTPS, domain routing,
   automated off-instance backups, and multi-instance deployment are not configured.
@@ -1039,6 +1072,7 @@ Completed:
 - [x] Completion-scoped Unit of Work with LLM generation outside the transaction
 - [x] Authenticated React practice dashboard, streaming negotiation workspace,
   and completion results
+- [x] Production React build served by Nginx with same-origin API proxying
 
 Planned:
 
@@ -1046,7 +1080,7 @@ Planned:
 - [ ] Standalone Coach, debrief, strategy, Memory-generation, and Memory-history APIs
 - [ ] Adaptive difficulty
 - [ ] Durable editable user profiles beyond authentication identity
-- [ ] Production frontend deployment
+- [ ] HTTPS and domain routing
 
 ## License status
 

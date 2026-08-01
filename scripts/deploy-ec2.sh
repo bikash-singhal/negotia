@@ -41,6 +41,7 @@ fi
 compose_command() {
     docker compose \
         --env-file "$ENV_FILE" \
+        -f compose.yaml \
         -f compose.production.yaml \
         "$@"
 }
@@ -53,14 +54,14 @@ git pull --ff-only origin "$DEPLOY_BRANCH"
 echo "Validating the production Compose configuration..."
 compose_command config --quiet
 
-echo "Building the API image..."
-compose_command build api
+echo "Building the API and frontend images..."
+compose_command build api frontend
 
 echo "Starting the production stack..."
 if ! compose_command up -d --wait; then
-    echo "Production stack did not become healthy. Recent API logs:" >&2
+    echo "Production stack did not become healthy. Recent service logs:" >&2
     compose_command ps >&2 || true
-    compose_command logs --tail=100 api >&2 || true
+    compose_command logs --tail=100 frontend api database >&2 || true
     exit 1
 fi
 

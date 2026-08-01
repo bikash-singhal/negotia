@@ -46,6 +46,7 @@ trap 'rm -f "$partial_file"' EXIT
 
 docker compose \
     --env-file "$ENV_FILE" \
+    -f compose.yaml \
     -f compose.production.yaml \
     exec -T database \
     sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
