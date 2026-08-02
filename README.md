@@ -1,705 +1,333 @@
+<div align="center">
+
 # Negotia
 
-> An agentic AI platform for realistic negotiation practice and personalized coaching.
+### Agentic AI Negotiation Coach
 
-Negotia is an environment for practicing realistic negotiation scenarios and
-building toward structured, personalized coaching. The current backend now
-supports its first complete vertical AI slice:
+**Practice before the stakes are real.**
 
-```text
-Create scenario
-→ create negotiation session
-→ submit user turn
-→ generate AI opponent response
-→ retrieve ordered conversation history
-→ explicitly complete the negotiation and receive a structured debrief, strategy,
-  and optional cross-session Memory
+Master salary negotiations, promotions, client conversations, vendor discussions, and business deals through realistic AI-powered practice.
+
+[🌐 Live Demo](http://54.227.221.0/) · [🎬 Product Demo](docs/images/negotia-demo.mp4) · [🏗️ Architecture](#architecture) · [🚀 Quick Start](#quick-start)
+
+</div>
+
+---
+
+## See Negotia in action
+
+[▶ Watch the product demo](docs/images/negotia-demo.mp4)
+
+<p align="center">
+  <img src="docs/images/swagger-dashboard.png" alt="Negotia dashboard" width="900">
+</p>
+
+---
+
+## Why Negotia?
+
+Negotiation is one of the most valuable professional skills, yet most people only practise it when something important is already on the line: a salary offer, promotion, client contract, vendor agreement, or business partnership.
+
+Traditional role-play requires another person. Professional coaching is expensive. Static simulations quickly become predictable.
+
+Negotia provides a safe place to practise realistic conversations, receive structured coaching, and improve across repeated sessions.
+
+---
+
+## The complete coaching loop
+
+```mermaid
+flowchart LR
+    A["Describe the situation"] --> B["Generate a realistic scenario"]
+    B --> C["Negotiate with an AI opponent"]
+    C --> D["Receive a personalised debrief"]
+    D --> E["Get an actionable strategy"]
+    E --> F["Build a long-term coaching profile"]
+    F --> C
 ```
 
-Standalone Coach, debrief, strategy, Memory-generation, and Memory-history APIs
-plus adaptive-difficulty capabilities remain future work. The authenticated
-latest-Memory read endpoint is implemented for the coaching dashboard.
+A user starts with only a title, difficulty level, and short description. Negotia generates the hidden negotiation context, simulates the other party, evaluates the user's behaviour, and converts the completed session into practical coaching.
 
-## Current status
+---
 
-Negotia provides an end-to-end opponent-response and negotiation-completion
-workflow through a versioned FastAPI API. A scenario supplies the negotiation
-context, a negotiation session references that scenario, ordered turns capture the
-conversation, and NegotiationEngine coordinates opponent generation and subsequent
-coach analysis. OpponentService uses the configured LLM provider to extract the
-current negotiation state before generating and persisting the next opponent turn.
+## Product walkthrough
 
-The default fake provider makes local development and automated tests deterministic
-and does not call AWS. The Bedrock provider is also implemented and can be selected
-through environment configuration. DebriefService synthesizes patterns from
-stored coach observations only when a client explicitly completes a negotiation.
-StrategyService then turns that persisted debrief into actionable recommendations.
-MemoryService then generates or reuses an immutable, user-scoped negotiator
-profile when at least two persisted Debrief/Strategy pairs exist for that user.
-The completion response
-includes the Debrief, Strategy, and optional historically associated Memory.
-AdaptiveContextService provides a read-only runtime projection of the latest
-Memory. A compiled LangGraph workflow now coordinates the completion lifecycle
-through these existing services while NegotiationEngine preserves the API-facing
-result contract. Scenario, negotiation, turn, coach-observation, Debrief, Strategy,
-Memory, and user records are persisted in PostgreSQL through explicit SQLAlchemy
-repositories. The latest user-scoped Memory has a focused read endpoint; other AI
-artifacts do not have standalone APIs.
+### 1. Generate a scenario
 
-## Current functionality
+<p align="center">
+  <img src="docs/images/swagger-start-negotiation-1.png" alt="Create a negotiation scenario" width="900">
+</p>
 
-- Versioned FastAPI API under `/api/v1`
-- Username/password registration and login with bcrypt password hashing
-- Expiring JWT access tokens and an authenticated current-user endpoint
-- Bearer authentication and owner authorization for every negotiation business
-  endpoint
-- User-scoped Scenario creation, listing, and retrieval
-- User-scoped negotiation-session creation, listing, and retrieval
-- User-scoped negotiation-turn creation and retrieval
-- Ordered turn history for each negotiation session
-- AI opponent-response generation with optional historical Adaptive Context
-- Incremental opponent-response streaming over newline-delimited JSON
-- Authenticated React dashboard with recent practice, concise persisted
-  negotiation takeaways, a latest-Memory coaching snapshot, resumable sessions,
-  saved scenarios, and completion-result navigation
-- Explicit user-triggered negotiation completion
-- Idempotent completion responses with stable Debrief, Strategy, and optional
-  Memory identifiers and timestamps
-- Deterministic orchestration through NegotiationEngine
-- Linear LangGraph completion workflow with explicit validation, Debrief,
-  Strategy, Memory, and completion nodes
-- Validation that an opponent response follows a user turn
-- LLM-assisted structured negotiation-state extraction
-- LLM-assisted coach observation extraction with optional historical Adaptive
-  Context
-- LLM-assisted structured debrief extraction from stored coach observations
-- One PostgreSQL-backed debrief record per negotiation session
-- LLM-assisted structured Strategy extraction from a persisted debrief
-- One PostgreSQL-backed Strategy record per negotiation session
-- LLM-assisted cross-session negotiator Memory extraction from persisted Debrief
-  and Strategy records
-- Immutable PostgreSQL-backed negotiator Memory versions isolated by user
-- Compact Memory V2 profiles with bounded stable patterns, supported trends, one
-  priority skill, one practice drill, and a progress summary
-- Authenticated current-user latest-Memory read endpoint
-- Read-only Adaptive Context projection derived from the latest negotiator Memory
-- Deterministic opponent behavior profiles for each scenario difficulty
-- Scenario-aware system prompts and complete-history user prompts
-- Deterministic `FakeLLMProvider` for development and testing
-- AWS Bedrock Runtime provider using the Converse API
-- Configurable `fake` or `bedrock` provider selection
-- Public scenario responses that exclude hidden context and walk-away conditions
-- SQLAlchemy repositories for users, scenarios, sessions, turns, coach
-  observations, Debriefs, Strategies, and Memory
-- PostgreSQL foreign keys, uniqueness constraints, and ordered Memory source
-  lineage
-- Alembic-managed schema and PostgreSQL lifecycle integration tests
-- Centralized configuration, logging, and JSON error responses
-- Automated API, domain, service, prompt, provider, and configuration tests
+The public form stays intentionally simple. Internal scenario details—such as opponent constraints, private context, and walk-away conditions—are generated by the AI and kept out of the user's setup flow.
 
-## Implemented architecture
+### 2. Review the generated scenario
+
+<p align="center">
+  <img src="docs/images/swagger-start-negotiation-2.png" alt="Generated negotiation scenario" width="900">
+</p>
+
+### 3. Negotiate in real time
+
+<p align="center">
+  <img src="docs/images/swagger-start-negotiation-3.png" alt="Streaming negotiation chat" width="900">
+</p>
+
+Opponent responses stream incrementally through the UI. The complete response is persisted only after the stream finishes successfully.
+
+### 4. Receive a personalised debrief
+
+<p align="center">
+  <img src="docs/images/swagger-debrief.png" alt="Negotiation debrief" width="900">
+</p>
+
+### 5. Leave with an actionable strategy
+
+<p align="center">
+  <img src="docs/images/swagger-strategy.png" alt="Negotiation strategy" width="900">
+</p>
+
+---
+
+## What makes Negotia different?
+
+| Capability | What it delivers |
+|---|---|
+| **AI-generated scenarios** | Realistic negotiation settings from a short user description |
+| **Adaptive AI opponent** | Scenario-aware responses shaped by difficulty, conversation state, and relevant historical risks |
+| **Streaming conversation** | Incremental opponent responses through newline-delimited JSON |
+| **Silent coaching** | Evidence-based observations captured after each completed exchange |
+| **Structured debrief** | Repeated strengths, weaknesses, missed opportunities, risks, and an overall assessment |
+| **Actionable strategy** | Prioritised tactics, concrete actions, example language, and preparation guidance |
+| **Cross-session memory** | A compact coaching profile that identifies stable patterns and the next skill to practise |
+| **Secure multi-user design** | Authentication, ownership, and anti-enumeration across negotiation resources |
+| **Production deployment** | React, FastAPI, PostgreSQL, Docker, Nginx, AWS EC2, and Amazon Bedrock |
+
+---
+
+## Why this is agentic AI
+
+Negotia is best described as an **agentic AI system with deterministic orchestration**.
+
+The high-level workflow is intentionally controlled by application logic for reliability, while specialised LLM-powered components perform distinct reasoning tasks.
+
+| AI component | Responsibility |
+|---|---|
+| **Scenario Generator** | Expands a simple request into a complete negotiation environment |
+| **Opponent** | Interprets the conversation and responds as the other party |
+| **Coach** | Observes the user's behaviour without interrupting the negotiation |
+| **Debrief** | Synthesises patterns from persisted coach observations |
+| **Strategy** | Converts the debrief into an improvement plan |
+| **Memory** | Compares completed sessions and builds a long-term coaching profile |
+
+The model does not dynamically choose the next system node. A deterministic engine and a linear LangGraph completion workflow coordinate specialised reasoning components, persistence, validation, and idempotency.
+
+This provides agentic behaviour without overstating the system as a fully autonomous multi-agent platform.
+
+---
+
+## Engineering highlights
+
+### Reliable structured generation
+
+Scenario data, negotiation state, coach observations, debriefs, strategies, and memory are validated as strict Pydantic models. Invalid JSON, missing fields, extra fields, and empty model output fail safely instead of leaking malformed data into the application.
+
+### Streaming with persistence safety
+
+The Bedrock provider uses `converse_stream`. The API forwards events as `application/x-ndjson`, while the frontend incrementally decodes split UTF-8 and JSON chunks into one temporary message bubble.
+
+A streamed opponent turn is persisted only after successful, nonblank completion. Interrupted partial text is removed, leaving the user's persisted turn available for retry.
+
+### Cross-session coaching memory
+
+Negotiator Memory V2 compares completed sessions chronologically, compresses semantically overlapping feedback, and produces a bounded profile containing stable strengths, stable weaknesses, improving skills, persistent risks, one highest-priority skill, one next-session drill, and a concise progress summary.
+
+The latest memory is projected into adaptive context for both the Coach and Opponent without exposing private historical details inside the simulation.
+
+### Transactional completion
+
+LLM generation occurs outside the database transaction. Final persistence occurs inside a short completion-scoped Unit of Work that locks the negotiation by `session_id` and authenticated `user_id`, then atomically persists the Debrief, Strategy, optional Memory, and completed session status.
+
+Repeated completion requests are idempotent and return the originally persisted artifacts without repeated model calls.
+
+### Authentication and ownership
+
+Negotia supports username/password registration, bcrypt password hashing, expiring JWT access tokens, authenticated current-user resolution, user-scoped resources, ownership derived through negotiation sessions, and not-found behaviour for both missing and unauthorised resources.
+
+### Production-ready delivery
+
+The production topology exposes only Nginx on port 80. FastAPI and PostgreSQL remain private inside the Docker Compose network. Nginx serves the compiled React application, proxies same-origin `/api/*` requests, and disables proxy buffering so streamed responses reach the browser immediately.
+
+---
+
+## Architecture
+
+### Application architecture
 
 ```mermaid
 flowchart TD
     Browser["Browser"]
-    Frontend["Nginx frontend container<br/>React SPA and /api reverse proxy"]
-    API["Versioned FastAPI API"]
-    CompletionAPI["Completion API"]
-    MemoryAPI["Latest Memory API"]
-    Config["Application configuration"]
-    Factory["LLM provider factory"]
+    Nginx["Nginx<br/>React SPA + reverse proxy"]
+    API["FastAPI /api/v1"]
+    Auth["Authentication & ownership"]
     Engine["NegotiationEngine"]
+    Scenario["Scenario Generator"]
+    Opponent["Opponent + state extraction"]
+    Coach["Coach observations"]
+    Graph["LangGraph completion workflow"]
+    Debrief["Debrief"]
+    Strategy["Strategy"]
+    Memory["Negotiator Memory"]
+    Context["Adaptive Context"]
+    DB[("PostgreSQL")]
+    Bedrock["Amazon Bedrock"]
 
-    Browser -->|"HTTP :80"| Frontend
-    Frontend -->|"same-origin /api/*"| API
-
-    subgraph Completion["Completion workflow"]
-        CompletionWorkflow["CompletionWorkflowService"]
-        CompletionGraph["Compiled LangGraph"]
-        ValidateNode["Validate session and turns"]
-        DebriefNode["Create or reuse Debrief"]
-        StrategyNode["Create or reuse Strategy"]
-        MemoryNode["Create, reuse, or omit Memory"]
-        CompleteNode["Mark session completed"]
-
-        CompletionWorkflow --> CompletionGraph
-        CompletionGraph --> ValidateNode
-        ValidateNode --> DebriefNode
-        DebriefNode --> StrategyNode
-        StrategyNode --> MemoryNode
-        MemoryNode --> CompleteNode
-    end
-
-    subgraph Persistence["SQL repository layer"]
-        ScenarioRepository["SQLScenarioRepository"]
-        NegotiationRepository["SQLNegotiationRepository"]
-        TurnRepository["SQLNegotiationTurnRepository"]
-        CoachRepository["SQLCoachObservationRepository"]
-        DebriefRepository["SQLNegotiationDebriefRepository"]
-        StrategyRepository["SQLNegotiationStrategyRepository"]
-        MemoryRepository["SQLNegotiatorMemoryRepository"]
-        UserRepository["SQLUserRepository"]
-        PostgreSQL[("PostgreSQL")]
-
-        ScenarioRepository --> PostgreSQL
-        NegotiationRepository --> PostgreSQL
-        TurnRepository --> PostgreSQL
-        CoachRepository --> PostgreSQL
-        DebriefRepository --> PostgreSQL
-        StrategyRepository --> PostgreSQL
-        MemoryRepository --> PostgreSQL
-        UserRepository --> PostgreSQL
-    end
-
-    subgraph Authentication["Authentication subsystem"]
-        AuthAPI["Authentication API"]
-        CurrentUser["JWT current-user dependency"]
-        UserService["UserService"]
-        AuthAPI --> UserService
-        CurrentUser --> UserService
-        UserService --> UserRepository
-    end
-
-    subgraph Scenario["Scenario subsystem"]
-        ScenarioAPI["Scenario API"]
-        ScenarioService["ScenarioService"]
-        ScenarioAPI --> ScenarioService
-        ScenarioService --> ScenarioRepository
-    end
-
-    subgraph Session["Negotiation Session subsystem"]
-        SessionAPI["Negotiation API"]
-        SessionService["NegotiationService"]
-        SessionAPI --> SessionService
-        SessionService --> NegotiationRepository
-        SessionService -->|"validates scenario"| ScenarioRepository
-    end
-
-    subgraph Turn["Negotiation Turn subsystem"]
-        TurnAPI["Turn API"]
-        TurnService["NegotiationTurnService"]
-        TurnAPI --> TurnService
-        TurnService --> TurnRepository
-        TurnService -->|"validates session"| NegotiationRepository
-    end
-
-    subgraph Opponent["Opponent AI subsystem"]
-        OpponentAPI["Opponent-response API"]
-        OpponentService["OpponentService"]
-        StateExtractor["NegotiationStateExtractor"]
-        StatePrompt["NegotiationStatePromptBuilder"]
-        ProfileBuilder["OpponentProfileBuilder"]
-        PromptBuilder["OpponentPromptBuilder"]
-
-        OpponentService --> StateExtractor
-        StateExtractor --> StatePrompt
-        OpponentService --> ProfileBuilder
-        OpponentService --> PromptBuilder
-        OpponentService -->|"loads scenario"| ScenarioRepository
-        OpponentService -->|"loads session"| NegotiationRepository
-        OpponentService -->|"loads and saves turns"| TurnRepository
-    end
-
-    subgraph Coach["Coach subsystem"]
-        CoachService["CoachService"]
-        CoachExtractor["CoachObservationExtractor"]
-        CoachPrompt["CoachPromptBuilder"]
-
-        CoachService --> CoachExtractor
-        CoachService --> CoachRepository
-        CoachExtractor --> CoachPrompt
-    end
-
-    subgraph Debrief["Debrief subsystem"]
-        DebriefService["DebriefService"]
-        DebriefExtractor["DebriefExtractor"]
-        DebriefPrompt["DebriefPromptBuilder"]
-
-        DebriefService -->|"loads stored observations"| CoachRepository
-        DebriefService --> DebriefExtractor
-        DebriefService --> DebriefRepository
-        DebriefExtractor --> DebriefPrompt
-    end
-
-    subgraph Strategy["Strategy subsystem"]
-        StrategyService["StrategyService"]
-        StrategyExtractor["StrategyExtractor"]
-        StrategyPrompt["StrategyPromptBuilder"]
-
-        StrategyService -->|"loads persisted debrief"| DebriefRepository
-        StrategyService --> StrategyExtractor
-        StrategyService --> StrategyRepository
-        StrategyExtractor --> StrategyPrompt
-    end
-
-    subgraph Memory["Memory subsystem"]
-        MemoryService["MemoryService"]
-        MemoryExtractor["MemoryExtractor"]
-        MemoryPrompt["MemoryPromptBuilder"]
-
-        StrategyRepository --> MemoryService
-        DebriefRepository --> MemoryService
-        MemoryService --> MemoryExtractor
-        MemoryService --> MemoryRepository
-        MemoryExtractor --> MemoryPrompt
-    end
-
-    subgraph Adaptive["Adaptive Context subsystem"]
-        AdaptiveContextService["AdaptiveContextService"]
-        AdaptiveContext["AdaptiveContext"]
-
-        MemoryService -->|"latest memory"| AdaptiveContextService
-        AdaptiveContextService --> AdaptiveContext
-    end
-
-    CoachService -->|"loads optional coaching context"| AdaptiveContextService
-    OpponentService -->|"loads optional opponent context"| AdaptiveContextService
-
-    Provider["LLMProvider protocol"]
-    Fake["FakeLLMProvider"]
-    Bedrock["BedrockLLMProvider"]
-
-    API --> ScenarioAPI
-    API --> SessionAPI
-    API --> TurnAPI
-    API --> OpponentAPI
-    API --> CompletionAPI
-    API --> AuthAPI
-    API --> MemoryAPI
-    CurrentUser --> ScenarioAPI
-    CurrentUser --> SessionAPI
-    CurrentUser --> TurnAPI
-    CurrentUser --> OpponentAPI
-    CurrentUser --> CompletionAPI
-    CurrentUser --> MemoryAPI
-    OpponentAPI --> Engine
-    CompletionAPI --> Engine
-    Engine -->|"request / response result"| OpponentService
-    Engine -->|"complete ordered history"| CoachService
-    Engine -->|"typed completion result"| CompletionWorkflow
-    ValidateNode --> SessionService
-    ValidateNode --> TurnService
-    DebriefNode --> DebriefService
-    StrategyNode --> StrategyService
-    MemoryNode --> MemoryService
-    CompleteNode --> SessionService
-
-    Config --> Factory
-    Factory -->|"LLM_PROVIDER=fake"| Fake
-    Factory -->|"LLM_PROVIDER=bedrock"| Bedrock
-
-    OpponentService --> Provider
-    StateExtractor --> Provider
-    CoachExtractor --> Provider
-    DebriefExtractor --> Provider
-    StrategyExtractor --> Provider
-    MemoryExtractor --> Provider
-    Fake -.->|"implements"| Provider
-    Bedrock -.->|"implements"| Provider
-
+    Browser --> Nginx
+    Nginx -->|"/api/*"| API
+    API --> Auth
+    API --> Engine
+    Engine --> Scenario
+    Engine --> Opponent
+    Engine --> Coach
+    Engine --> Graph
+    Scenario --> Bedrock
+    Opponent --> Bedrock
+    Coach --> Bedrock
+    Graph --> Debrief --> Bedrock
+    Graph --> Strategy --> Bedrock
+    Graph --> Memory --> Bedrock
+    Memory --> Context
+    Context --> Opponent
+    Context --> Coach
+    Auth --> DB
+    Scenario --> DB
+    Opponent --> DB
+    Coach --> DB
+    Debrief --> DB
+    Strategy --> DB
+    Memory --> DB
 ```
 
-Registration, login, and health are public. Every negotiation business route
-resolves the authenticated user from its bearer token and passes only that
-validated `user_id` through services, workflow state, and owner-aware repository
-queries. Request bodies cannot choose an owner. Scenarios, negotiation sessions,
-and Memory records store direct `users.id` foreign keys; turn, Coach, Debrief, and
-Strategy ownership is derived through the negotiation session.
-
-SQL repositories are instantiated once for the application and shared by the
-services that need them. Each operation opens a short SQLAlchemy session and
-persists detached domain records to PostgreSQL. This lets an opponent response
-observe scenarios, sessions, and turns created through the API, while CoachService
-retains append-only observations for completed exchanges. DebriefService reads
-only those stored observations and persists at most one synthesized debrief per
-session.
-StrategyService reads only a persisted NegotiationDebriefRecord and stores at most
-one strategy per session.
-MemoryService lists only the authenticated user's persisted strategies, resolves
-that user's corresponding debriefs by session ID, and stores each eligible
-profile as a new immutable version belonging to that user.
-Each completion-triggered version is associated internally with its triggering
-session.
-AdaptiveContextService depends only on MemoryService. It reads the latest Memory
-on every request and projects selected fields into a new immutable runtime
-context without persistence, caching, LLM calls, or repository access.
-CompletionWorkflowService compiles one linear LangGraph at construction and
-coordinates these existing services through explicit validation, Debrief,
-Strategy, Memory, and completion nodes. The workflow has no repository
-dependencies. It returns domain records in a typed internal result, which
-NegotiationEngine maps into its existing completion result.
-
-The completion Unit of Work locks the negotiation by both `session_id` and
-authenticated `user_id`. Structured artifact generation happens before its short
-transaction; Debrief, Strategy, optional completion-triggered Memory, and the
-completed session status are then persisted atomically in one SQLAlchemy session.
-
-## End-to-end opponent workflow
-
-1. Create a scenario.
-2. Create a negotiation session linked by `scenario_id`.
-3. Submit a user turn.
-4. Request an opponent response; the API delegates to NegotiationEngine.
-5. NegotiationEngine delegates opponent generation to OpponentService.
-6. Load the session, referenced scenario, and ordered turn history.
-7. Build a state-extraction prompt from the complete ordered history.
-8. Call the configured LLM provider and validate its JSON as NegotiationState.
-9. Derive a deterministic behavior profile from the scenario difficulty.
-10. Load the latest optional Adaptive Context once.
-11. Build the opponent system prompt with the state, behavior profile, and only
-    relevant opponent adjustments while retaining the complete history in the user
-    prompt. Scenario constraints remain authoritative.
-12. When no Memory exists, use the standard opponent prompt without an adaptive
-    section.
-13. Call the configured LLM provider for the opponent response.
-14. Strip and validate the generated response.
-15. Save it as the next numbered opponent turn and return it with the complete
-    ordered conversation history.
-16. NegotiationEngine passes the complete history and latest exchange to
-    CoachService.
-17. CoachService loads the latest optional Adaptive Context once, then extracts and
-    persists one observation linked to the user and opponent turn IDs. Historical
-    context guides attention, while current-session evidence remains authoritative.
-18. When no Memory exists, CoachService follows the standard non-adaptive prompt
-    path without rendering a historical-context section.
-19. NegotiationEngine ignores the internal observation record and returns only the
-    opponent turn to the API.
-
-## Explicit completion workflow
-
-1. The client explicitly requests completion; negotiation content and LLM output
-   never complete a session automatically.
-2. NegotiationEngine delegates once to CompletionWorkflowService.
-3. The workflow validation node validates the session. For an incomplete session,
-   it also loads ordered turns and requires a latest opponent turn and at least
-   one adjacent user-opponent exchange.
-4. The Debrief node reuses an existing debrief or delegates generation to
-   DebriefService, which uses stored CoachObservationRecords.
-5. The Strategy node reuses an existing strategy or delegates generation to
-   StrategyService using the persisted debrief.
-6. The Memory node reuses the Memory associated with this completion, delegates
-   generation when at least two complete artifact pairs exist, or records no
-   Memory when history is still insufficient.
-7. The final node delegates to NegotiationService to transition `created` or
-   `active` to `completed` and update `updated_at`, which is returned as
-   `completed_at`.
-8. Repeated completion calls follow the same linear graph but use status-aware
-   nodes: turn validation and all artifact generation are skipped, the persisted
-   Debrief and Strategy are required, the associated Memory is retrieved when
-   present, and `mark_completed` is not called. The original timestamp and
-   artifacts are returned without LLM calls.
-
-### Planned completion transaction boundary
-
-The current workflow preserves recovery and idempotency by committing each
-repository write independently in this order:
-
-```text
-Debrief
-→ Strategy
-→ optional completion-triggered Memory
-→ completed session status
-```
-
-If a later step fails, an incomplete negotiation can retain earlier completion
-artifacts, and a retry reuses them. A completion-scoped Unit of Work is planned to
-make final persistence atomic without holding a database transaction open during
-LLM calls. It is not implemented yet.
+### Completion workflow
 
 ```mermaid
 flowchart LR
-    subgraph Outside["Outside database transaction"]
-        Validate["Validate session and turns"]
-        Read["Load observations and artifact history"]
-        Generate["Build prompts and call LLM providers"]
-        Prepare["Validate and prepare domain records"]
-
-        Validate --> Read --> Generate --> Prepare
-    end
-
-    subgraph Transaction["Planned short completion transaction"]
-        Reconcile["Lock session and reconcile existing artifacts"]
-        PersistDebrief["Persist missing Debrief"]
-        PersistStrategy["Persist missing Strategy"]
-        PersistMemory["Persist optional Memory and source lineage"]
-        PersistStatus["Mark negotiation completed"]
-        Commit["Commit once"]
-
-        Reconcile --> PersistDebrief --> PersistStrategy
-        PersistStrategy --> PersistMemory --> PersistStatus --> Commit
-    end
-
-    Prepare --> Reconcile
+    A["Validate session and turns"] --> B["Create or reuse Debrief"]
+    B --> C["Create or reuse Strategy"]
+    C --> D["Create, reuse, or omit Memory"]
+    D --> E["Atomically persist artifacts and complete session"]
 ```
 
-Turns and Coach observations remain outside this boundary because they are
-persisted before explicit completion. Completed-session requests remain read-only
-and return the original persisted artifacts and timestamp.
+### Production deployment
 
-Illustrative conversation:
-
-```text
-Turn 1 — User:
-We need a ten percent reduction to renew this year.
-
-Turn 2 — Opponent:
-A ten percent reduction would be difficult, but I may be able to consider a
-smaller adjustment for a longer commitment.
+```mermaid
+flowchart LR
+    User["Browser"] -->|"HTTP :80"| Nginx["Nginx container"]
+    Nginx -->|"Static files"| React["React production build"]
+    Nginx -->|"/api/*"| API["FastAPI container"]
+    API --> DB[("PostgreSQL container")]
+    API -->|"IAM role"| Bedrock["Amazon Bedrock"]
 ```
 
-This example illustrates the intended interaction and is not a guaranteed model
-output.
-
-## Domain model
-
-### Scenario
-
-A Scenario belongs to one authenticated user and defines the opponent role,
-objective, difficulty, personality,
-negotiation style, constraints, private context, and walk-away conditions. Public
-`ScenarioResponse` objects intentionally exclude private context and walk-away
-conditions.
-
-### Negotiation session
-
-A NegotiationSession belongs to the same authenticated user as its referenced
-Scenario, links it by `scenario_id`, and tracks its status and timestamps.
-
-### Negotiation turn
-
-A NegotiationTurn references a session by `session_id`, identifies the user or
-opponent speaker, stores the message content, and carries a session-specific turn
-number. Session history is returned in turn-number order.
-
-### Opponent profile
-
-An OpponentProfile translates the scenario's fixed difficulty into deterministic
-guidance for resistance, concessions, disclosure, tactics, pressure, mistake
-tolerance, and boundary discipline. These profiles shape the system prompt while
-keeping every difficulty professional and respectful.
-
-### Negotiation state
-
-NegotiationState is an immutable, in-memory result extracted from the complete
-turn history before each opponent response. It records the latest user and
-opponent positions, agreements, open topics, unresolved items, and negotiation
-stage. The state supplements the raw history and is not persisted.
-
-### Coach observation
-
-CoachObservation contains evidence-based strengths, weaknesses, missed
-opportunities, risk signals, and a confidence value extracted from the ordered
-conversation. The coach analyzes only the user's behavior, does not participate
-in the negotiation, and persists each observation inside an immutable
-CoachObservationRecord linked to the completed user-opponent exchange.
-When available, the latest Adaptive Context supplies the highest-priority skill,
-coaching focus, and stable strengths to guide observation. The prompt requires
-current-session evidence and does not treat historical tendencies as proof of
-current behavior.
-
-### Negotiation debrief
-
-NegotiationDebrief synthesizes repeated strengths, repeated weaknesses, important
-missed opportunities, recurring risks, an overall assessment, and confidence from
-stored CoachObservationRecords. It does not receive or re-read raw conversation
-turns or scenario data. An immutable NegotiationDebriefRecord stores the composed
-debrief, source-observation count, session ID, and creation time. Generation is
-triggered only by the explicit negotiation-completion endpoint. There is no
-automatic completion inference or standalone debrief retrieval endpoint.
-
-### Negotiation strategy
-
-NegotiationStrategy converts one persisted NegotiationDebriefRecord into a
-primary objective, expected outcome, prioritized actionable tactics, long-term
-skills, preparation checklist, avoidance guidance, and confidence. Each tactic
-contains concrete actions, example language, and a success indicator. Strategy
-does not receive turns, coach observations, scenarios, negotiation state, or
-session repositories. It is generated or reused during explicit completion and
-returned as a strongly typed part of the completion response.
-
-### Negotiator memory
-
-NegotiatorMemory V2 is a compact coaching profile containing up to three stable
-strengths and weaknesses, up to two improving skills and persistent risks, one
-highest-priority skill, one next-session drill, and one progress summary. It uses
-only persisted NegotiationDebriefRecord and NegotiationStrategyRecord pairs.
-History is ordered oldest to newest by the debrief creation timestamp, with the
-paired strategy timestamp preserving deterministic order when needed; UUIDs do
-not define chronology. The prompt requires semantic synthesis instead of copying
-per-session lists and prohibits unsupported improvement or regression claims.
-Trend language is deliberately cautious with only two sessions.
-
-Each NegotiatorMemoryRecord stores source session IDs in that chronological order
-and a UTC creation time. Records form an append-only version history scoped to one
-authenticated user. Completion generates a version only when at least two
-complete artifact pairs for that user exist, so the first eligible negotiation can
-return no Memory. Each completion-triggered record retains internal trigger
-lineage, and repeated completion returns that historical version rather than the
-latest global one. `GET /api/v1/memory/latest` exposes only the authenticated
-user's latest profile and returns JSON `null` when none exists; it does not mutate
-or expose Memory history.
-
-### Adaptive context
-
-AdaptiveContext is a read-only runtime projection of the latest
-NegotiatorMemoryRecord. It exposes the highest-priority skill as its focus area,
-improving skills as coaching focus, persistent risks as opponent adjustments,
-and stable strengths. Every projection defensively copies its lists and is rebuilt from the
-latest Memory rather than cached. CoachService now reads this projection once per
-observation and renders only coaching-relevant fields; no Memory preserves the
-standard Coach prompt. OpponentService independently renders only opponent
-adjustments as optional risk-testing guidance. These adjustments create realistic
-opportunities rather than predetermined failure, never override scenario
-constraints, and must not reveal historical knowledge during the simulation. No
-Memory preserves the standard Opponent prompt. The projection has no public
-endpoint.
+---
 
 ## Technology stack
 
-- Python 3.12+
-- FastAPI and Uvicorn
-- Pydantic v2 and pydantic-settings
-- PostgreSQL 17
-- SQLAlchemy 2.x and psycopg
-- Alembic database migrations
-- pwdlib with bcrypt password hashing and PyJWT access tokens
-- Docker Compose for production-like local and single-instance EC2 execution
-- boto3 and AWS Bedrock Runtime
-- Python standard-library logging
-- pytest, FastAPI TestClient, and HTTPX
-- Ruff
-- uv
+| Layer | Technologies |
+|---|---|
+| **Frontend** | React 19, TypeScript, Vite, native Fetch API, plain CSS |
+| **Backend** | Python 3.12, FastAPI, Uvicorn, Pydantic v2 |
+| **AI orchestration** | NegotiationEngine, LangGraph, strict structured-output parsing |
+| **LLM providers** | Amazon Bedrock Runtime and deterministic fake provider |
+| **Persistence** | PostgreSQL 17, SQLAlchemy 2, psycopg, Alembic |
+| **Authentication** | bcrypt password hashing, PyJWT bearer tokens |
+| **Infrastructure** | Docker, Docker Compose, Nginx, AWS EC2, EC2 IAM role |
+| **Quality** | pytest, HTTPX, Ruff, Pyright, frontend type checking and build validation |
+
+---
 
 ## Project structure
 
 ```text
 negotia/
-|-- app/
-|   |-- api/
-|   |   |-- dependencies.py
-|   |   `-- v1/
-|   |       |-- auth.py
-|   |       |-- health.py
-|   |       |-- memory.py
-|   |       |-- negotiations.py
-|   |       |-- router.py
-|   |       |-- scenarios.py
-|   |       `-- turns.py
-|   |-- aws/
-|   |   `-- session.py
-|   |-- core/
-|   |   |-- config.py
-|   |   |-- exception_handlers.py
-|   |   |-- exceptions.py
-|   |   `-- logging_config.py
-|   |-- database/
-|   |   |-- models/
-|   |   |-- repositories/
-|   |   |-- base.py
-|   |   `-- session.py
-|   |-- domains/
-|   |   |-- adaptive_context/
-|   |   |-- coach/
-|   |   |-- debrief/
-|   |   |-- memory/
-|   |   |-- negotiation/
-|   |   |-- negotiation_state/
-|   |   |-- negotiation_turn/
-|   |   |-- opponent/
-|   |   |-- scenario/
-|   |   |-- strategy/
-|   |   `-- user/
-|   |-- security/
-|   |   |-- passwords.py
-|   |   `-- tokens.py
-|   |-- llm/
-|   |   |-- bedrock.py
-|   |   |-- factory.py
-|   |   |-- fake.py
-|   |   `-- provider.py
-|   |-- prompts/
-|   |   |-- coach.py
-|   |   |-- debrief.py
-|   |   |-- memory.py
-|   |   |-- negotiation_state.py
-|   |   |-- opponent.py
-|   |   `-- strategy.py
-|   |-- services/
-|   |   |-- adaptive_context.py
-|   |   |-- coach.py
-|   |   |-- debrief.py
-|   |   |-- memory.py
-|   |   |-- negotiation_engine.py
-|   |   |-- negotiation_state.py
-|   |   |-- opponent.py
-|   |   `-- strategy.py
-|   |-- workflows/
-|   |   `-- completion/
-|   `-- main.py
-|-- alembic/
-|-- docker/
-|   `-- entrypoint.sh
-|-- frontend/
-|   |-- src/
-|   |-- .dockerignore
-|   |-- .env.example
-|   |-- Dockerfile
-|   |-- nginx.conf
-|   |-- package.json
-|   `-- pnpm-lock.yaml
-|-- scripts/
-|   |-- backup-postgres.sh
-|   `-- deploy-ec2.sh
-|-- tests/
-|-- .dockerignore
-|-- .env.example
-|-- .env.production.example
-|-- .gitignore
-|-- .python-version
-|-- alembic.ini
-|-- compose.yaml
-|-- compose.production.yaml
-|-- Dockerfile
-|-- pyproject.toml
-|-- README.md
-`-- uv.lock
+├── app/
+│   ├── api/                    # FastAPI dependencies and versioned routes
+│   ├── aws/                    # AWS session construction
+│   ├── core/                   # Configuration, errors, logging, observability
+│   ├── database/               # SQLAlchemy models, repositories, sessions
+│   ├── domains/                # Domain models, schemas, repositories, exceptions
+│   ├── llm/                    # Provider protocol, Bedrock, fake provider
+│   ├── prompts/                # Structured prompts for each AI responsibility
+│   ├── services/               # Application and AI services
+│   ├── workflows/              # LangGraph completion workflow
+│   └── main.py
+├── frontend/
+│   ├── src/                    # React application
+│   ├── Dockerfile
+│   └── nginx.conf
+├── alembic/                    # Database migrations
+├── scripts/                    # EC2 deployment and PostgreSQL backup helpers
+├── tests/                      # API, service, domain, provider, and deployment tests
+├── compose.yaml
+├── compose.production.yaml
+├── Dockerfile
+├── pyproject.toml
+└── uv.lock
 ```
 
-Package marker files are omitted for brevity.
+---
 
-## Local development
+## Quick start
 
-Install [uv](https://docs.astral.sh/uv/), then run these commands from the
-repository root:
+### Prerequisites
+
+- Python 3.12
+- [uv](https://docs.astral.sh/uv/)
+- Docker with Docker Compose
+- Node.js and pnpm for frontend development
+
+### 1. Clone and configure
 
 ```powershell
+git clone https://github.com/bikash-singhal/negotia.git
+Set-Location negotia
+
 uv python install 3.12
 uv sync --dev
+
 Copy-Item .env.example .env
+Copy-Item frontend/.env.example frontend/.env
+```
+
+### 2. Start PostgreSQL and migrate
+
+```powershell
 docker compose up -d database
 uv run alembic upgrade head
 ```
 
-The example environment configures the local PostgreSQL container. Application
-startup does not run migrations automatically; apply Alembic migrations before
-running the API or database-backed tests.
+### 3. Start the API
 
-The ownership migration is intentionally destructive for pre-release negotiation
-data: it deletes existing Scenario rows and their dependent negotiation-domain
-artifacts before adding required `user_id` foreign keys. Existing User rows are
-preserved. This avoids silently assigning historical data to an arbitrary user;
-back up any development data that must be retained before upgrading.
+```powershell
+uv run uvicorn app.main:app --reload
+```
 
-The Memory V2 migration clears only pre-release `negotiator_memories` rows and
-their source-lineage rows before replacing the incompatible V1 fields. Users,
-scenarios, negotiations, turns, observations, debriefs, and strategies are
-preserved. Existing Memory profiles are regenerated on a later eligible
-completion rather than guessed into the new schema.
+The local API runs at `http://127.0.0.1:8000`.
+
+### 4. Start the frontend
+
+```powershell
+Set-Location frontend
+pnpm install
+pnpm dev
+```
+
+Open `http://localhost:5173`.
+
+---
 
 ## LLM provider configuration
 
-The application loads `.env` using UTF-8 encoding. The provider-related defaults
-in `.env.example` are:
+The default provider is deterministic and does not call AWS:
 
 ```dotenv
 LLM_PROVIDER=fake
@@ -708,92 +336,15 @@ AWS_REGION=us-east-1
 AWS_PROFILE=
 ```
 
-- `fake` is the default and returns a deterministic response without making AWS
-  calls.
-- `bedrock` enables real generation through AWS Bedrock Runtime.
-- `BEDROCK_MODEL_ID` selects the Bedrock model used by the Converse request.
-- `AWS_REGION` is always supplied when creating the AWS session.
-- `AWS_PROFILE` is optional. When it is empty, boto3 uses the normal AWS
-  credential chain, including IAM roles on EC2. When set, the named local profile
-  is used.
+Set `LLM_PROVIDER=bedrock` to use Amazon Bedrock.
 
-AWS credentials are not stored in this repository. Do not place access keys or
-secret keys in `.env.example`.
+Locally, boto3 can use a named profile through `AWS_PROFILE`. On EC2, leave it empty and attach an IAM role with only the required Bedrock model-invocation permissions.
 
-Other supported settings are:
+AWS access keys and secret keys are not stored in this repository.
 
-| Environment variable | Default |
-| --- | --- |
-| `APP_NAME` | `Negotia API` |
-| `API_VERSION` | `0.1.0` |
-| `DEBUG` | `false` |
-| `DATABASE_URL` | `postgresql+psycopg://localhost:5432/negotia` |
-| `JWT_SECRET_KEY` | Local-development placeholder; replace outside local development |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` |
+---
 
-## Running the API
-
-```powershell
-uv run uvicorn app.main:app --reload
-```
-
-The API is available at `http://127.0.0.1:8000`.
-
-## Frontend local development
-
-The React frontend supports registration, login, session restoration through
-`/auth/me`, logout, an authenticated practice dashboard, streamlined scenario
-creation and selection, negotiation recovery and streaming chat, explicit
-completion, and user-focused Debrief, Strategy, and optional Memory results.
-The dashboard reads the authenticated user's latest persisted Memory as a compact
-Coaching Snapshot and refreshes it without a full page reload. Recent completed
-negotiations reuse the idempotent completion endpoint, cache those persisted
-results in React state, and derive one takeaway from the first missed opportunity,
-first repeated weakness, or overall assessment, in that order. This adds no LLM
-call for an already completed negotiation.
-
-Install Node.js and pnpm, start the API locally, then run these commands in
-Windows PowerShell:
-
-```powershell
-Set-Location frontend
-pnpm install
-Copy-Item .env.example .env
-pnpm dev
-```
-
-`frontend/.env` configures the API root without embedding a deployment address in
-source code:
-
-```dotenv
-VITE_API_BASE_URL=http://localhost:8000/api/v1
-```
-
-Open `http://localhost:5173`. After signing in, create or select a scenario,
-start a negotiation, exchange messages, and explicitly complete it to view the
-generated results. Recent negotiations can be reopened after a browser refresh;
-the backend remains the source of truth for sessions and turns.
-
-The backend allows the Vite origin by default;
-additional trusted origins can be configured with the backend `CORS_ORIGINS`
-setting as a JSON array.
-
-Validate TypeScript and create a production bundle with:
-
-```powershell
-pnpm typecheck
-pnpm build
-```
-
-For this MVP, the access token is stored in browser `localStorage`, verified with
-`GET /auth/me` on startup, and removed when invalid, expired, or explicitly logged
-out. Passwords are held only in form state and are never persisted. Local storage
-is a pragmatic MVP choice, not the strongest production browser-token strategy.
-
-## Running the complete stack with Docker Compose
-
-Create the local environment file once, then build and start the API and
-PostgreSQL services:
+## Running with Docker Compose
 
 ```powershell
 Copy-Item .env.example .env
@@ -801,30 +352,11 @@ docker compose build api
 docker compose up -d --wait
 ```
 
-The API container waits for PostgreSQL to become healthy, runs Alembic migrations,
-and starts Uvicorn only after migration succeeds. The API is available at
-`http://127.0.0.1:8000`, and its container health check calls
-`GET /api/v1/health`.
-
-If port 8000 is already in use, select another host port without changing the
-container port:
-
-```powershell
-$env:API_PORT = "8001"
-docker compose up -d --wait
-```
-
-Inspect service state and API startup logs with:
+Inspect services and logs:
 
 ```powershell
 docker compose ps
 docker compose logs -f api
-```
-
-Apply migrations manually inside the running API container when needed:
-
-```powershell
-docker compose exec api uv run alembic upgrade head
 ```
 
 Stop the stack without deleting PostgreSQL data:
@@ -833,256 +365,145 @@ Stop the stack without deleting PostgreSQL data:
 docker compose down
 ```
 
-PostgreSQL data is stored in the `negotia_postgres_data` named volume. Do not use
-`docker compose down --volumes` when the local data must be retained.
+Do not add `--volumes` when the database must be retained.
 
-## Single-instance EC2 deployment
+---
 
-The repository includes a minimal production Compose override for one Ubuntu EC2
-instance running the Nginx frontend, FastAPI application, and PostgreSQL as
-separate containers. Nginx serves the compiled React SPA and proxies same-origin
-`/api/*` requests to the internal API service. Only the frontend publishes a host
-port; the API and PostgreSQL remain reachable only on the Compose network. This
-deployment does not configure HTTPS, a domain, a load balancer, or multi-instance
-orchestration.
+## Production deployment on EC2
 
-Install Docker Engine with the Docker Compose plugin on the instance, then clone
-the repository and create the production environment file:
+The included production Compose override runs three containers on one Ubuntu EC2 instance:
+
+- `frontend`: Nginx serving the React build and proxying `/api/*`
+- `api`: FastAPI, available only inside the Compose network
+- `database`: PostgreSQL, available only inside the Compose network
+
+Only the frontend publishes a host port.
+
+### Configure the instance
 
 ```bash
-git clone <repository-url> negotia
+git clone https://github.com/bikash-singhal/negotia.git
 cd negotia
 cp .env.production.example .env.production
 chmod 600 .env.production
 ```
 
-Replace `POSTGRES_PASSWORD` and `JWT_SECRET_KEY` with strong random values, then
-confirm the Bedrock model and AWS region. Keep `VITE_API_BASE_URL=/api/v1` so the
-production browser uses the Nginx same-origin proxy. Do not add AWS access keys,
-secret keys, or `AWS_PROFILE`.
+Replace the production database password and JWT secret with strong random values. Keep `VITE_API_BASE_URL=/api/v1`.
 
-Attach an EC2 IAM role that grants only the required Amazon Bedrock model-invocation
-permissions; boto3 will obtain temporary credentials from that role through the
-default AWS credential chain. Local `~/.aws` files are neither mounted nor copied
-into the API image.
+Attach an EC2 IAM role for Bedrock rather than storing AWS credentials on the server.
 
-Configure the EC2 Security Group conservatively:
+Recommended inbound rules:
 
-- Allow SSH port 22 only from the administrator's trusted IP address.
-- Allow TCP port 80 only from clients that need web access.
-- Do not open API port 8000 or PostgreSQL port 5432. The production override
-  removes both host-port publications.
+- SSH `22` only from the administrator's trusted IP
+- HTTP `80` for intended users
+- do not expose `8000` or `5432`
 
-After deployment, open `http://<ec2-public-ip>/`. Browser API requests use
-`/api/v1` on that same origin and Nginx proxies them to `api:8000`. The proxy keeps
-HTTP/1.1 enabled and response buffering disabled so streaming opponent responses
-are delivered incrementally. Production does not need a cross-origin CORS
-allowance for this browser path.
-
-The default FastAPI `/docs` and `/openapi.json` routes are intentionally not
-proxied by the production Nginx configuration. Inspect them through the local
-development stack at `http://127.0.0.1:8000/docs`; do not open port 8000 on EC2
-just to expose API documentation.
-
-Deploy or safely update the current Git branch with:
-
-```bash
-bash scripts/deploy-ec2.sh
-```
-
-The script verifies Docker and Compose, requires `.env.production`, performs a
-fast-forward-only pull, validates the merged Compose configuration, builds the API
-and frontend images, starts the stack, waits for healthy services, and prints
-service status. On startup failure it prints recent frontend, API, and database
-logs. It never removes the PostgreSQL volume.
-
-Use the production Compose files for operational commands:
-
-```bash
-docker compose --env-file .env.production -f compose.yaml -f compose.production.yaml ps
-docker compose --env-file .env.production -f compose.yaml -f compose.production.yaml logs -f frontend api
-docker compose --env-file .env.production -f compose.yaml -f compose.production.yaml restart frontend api
-```
-
-Every API container startup runs `uv run alembic upgrade head` before Uvicorn.
-Uvicorn starts only when migrations succeed. The API container also waits for the
-PostgreSQL health check before starting.
-
-For a safe update, create a database backup first, then run the deployment script.
-Its fast-forward-only Git pull avoids silently merging divergent server changes,
-and Compose rebuilds both deployable images before replacing containers.
-
-Create a timestamped logical PostgreSQL backup without deleting older backups:
+### Deploy
 
 ```bash
 bash scripts/backup-postgres.sh
+bash scripts/deploy-ec2.sh
 ```
 
-Backups are written to the ignored local `backups/` directory. Copy them to durable
-off-instance storage according to the deployment's recovery requirements.
+The deployment script performs a fast-forward-only pull, validates Compose, builds both images, runs migrations during API startup, waits for healthy services, prints logs on failure, and never removes the PostgreSQL volume.
 
-Stop containers without deleting database data:
+> The live deployment currently uses plain HTTP. HTTPS, domain routing, and automated off-instance backups remain future infrastructure work.
 
-```bash
-docker compose --env-file .env.production -f compose.yaml -f compose.production.yaml down
-```
+---
 
-Do not add `--volumes` to that command. PostgreSQL data remains in the
-`negotia_postgres_data` named volume.
+## API overview
 
-## Available API endpoints
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/health` | API health |
+| `POST` | `/api/v1/auth/register` | Register a user |
+| `POST` | `/api/v1/auth/login` | Authenticate and receive a token |
+| `GET` | `/api/v1/auth/me` | Retrieve the current user |
+| `POST` | `/api/v1/scenarios` | Generate and persist a scenario |
+| `GET` | `/api/v1/scenarios` | List the current user's scenarios |
+| `GET` | `/api/v1/scenarios/{scenario_id}` | Retrieve a scenario |
+| `POST` | `/api/v1/negotiations` | Create a negotiation session |
+| `GET` | `/api/v1/negotiations` | List negotiation sessions |
+| `GET` | `/api/v1/negotiations/{session_id}` | Retrieve a session |
+| `POST` | `/api/v1/turns` | Persist a negotiation turn |
+| `GET` | `/api/v1/turns/{turn_id}` | Retrieve a turn |
+| `GET` | `/api/v1/negotiations/{session_id}/turns` | Retrieve ordered history |
+| `POST` | `/api/v1/negotiations/{session_id}/opponent-response` | Generate a non-streaming opponent turn |
+| `POST` | `/api/v1/negotiations/{session_id}/opponent-response/stream` | Stream and persist an opponent turn |
+| `POST` | `/api/v1/negotiations/{session_id}/complete` | Complete a session and return coaching artifacts |
+| `GET` | `/api/v1/memory/latest` | Retrieve the current user's latest coaching profile |
 
-| Method | Path | Description |
-| --- | --- | --- |
-| `GET` | `/api/v1/health` | Report API health. |
-| `POST` | `/api/v1/auth/register` | Register a user with a unique username. |
-| `POST` | `/api/v1/auth/login` | Authenticate and receive an expiring bearer token. |
-| `GET` | `/api/v1/auth/me` | Retrieve the authenticated user. |
-| `GET` | `/api/v1/memory/latest` | Retrieve the authenticated user's latest compact Memory, or `null`. |
-| `POST` | `/api/v1/scenarios` | Create a scenario. |
-| `GET` | `/api/v1/scenarios` | List scenarios. |
-| `GET` | `/api/v1/scenarios/{scenario_id}` | Retrieve a scenario. |
-| `POST` | `/api/v1/negotiations` | Create a negotiation session for an existing scenario. |
-| `GET` | `/api/v1/negotiations` | List negotiation sessions. |
-| `GET` | `/api/v1/negotiations/{session_id}` | Retrieve a negotiation session. |
-| `POST` | `/api/v1/turns` | Create a user or opponent turn for an existing session. |
-| `GET` | `/api/v1/turns/{turn_id}` | Retrieve a turn. |
-| `GET` | `/api/v1/negotiations/{session_id}/turns` | Retrieve ordered session history. |
-| `POST` | `/api/v1/negotiations/{session_id}/opponent-response` | Generate and store the next opponent turn. |
-| `POST` | `/api/v1/negotiations/{session_id}/opponent-response/stream` | Stream and then store the next opponent turn. |
-| `POST` | `/api/v1/negotiations/{session_id}/complete` | Explicitly complete a negotiation and return its persisted Debrief, Strategy, and optional Memory. |
+Health, registration, and login are public. All other routes require a bearer token.
 
-Health, registration, and login are public. Every other endpoint in the table
-requires an `Authorization: Bearer <access-token>` header. For example:
+---
 
-```powershell
-$login = Invoke-RestMethod -Method Post `
-  -Uri http://127.0.0.1:8000/api/v1/auth/login `
-  -ContentType "application/json" `
-  -Body '{"username":"your-username","password":"your-password"}'
-
-$headers = @{ Authorization = "Bearer $($login.access_token)" }
-Invoke-RestMethod -Uri http://127.0.0.1:8000/api/v1/scenarios -Headers $headers
-```
-
-Lists and resource lookups are owner-scoped. A resource owned by another user is
-reported as not found, matching the public behavior for a nonexistent resource.
-
-The opponent-response endpoint requires an existing user turn. It returns `409`
-when there is no user turn or when the latest turn already belongs to the
-opponent. The streaming alternative emits newline-delimited JSON events and
-persists the opponent turn only after provider streaming finishes successfully.
-
-The completion endpoint requires at least one completed user-opponent exchange,
-an opponent latest turn, and a persisted coach observation. Repeated successful
-completion requests are idempotent.
-
-The unversioned `GET /health` path returns `404`. Error responses use the
-application's consistent JSON envelope:
-
-```json
-{
-  "error": {
-    "code": "not_found",
-    "message": "Not Found"
-  }
-}
-```
-
-## Running tests
+## Testing and quality checks
 
 ```powershell
 uv run pytest
-```
-
-The test suite uses the fake provider for API and service workflows and mocks AWS
-client creation in Bedrock-specific tests. It does not require live AWS access.
-Database repository and lifecycle integration tests use the configured PostgreSQL
-database and isolate test state with database transactions and savepoints.
-
-## Running code-quality checks
-
-```powershell
 uv run ruff check .
 uv run ruff format --check .
+uv run pyright
+
+Set-Location frontend
+pnpm typecheck
+pnpm test
+pnpm build
 ```
+
+The project includes API, domain, service, prompt, provider, ownership, persistence, streaming, transaction, and deployment tests. The fake provider keeps normal automated tests deterministic and independent of live AWS access.
+
+---
 
 ## Current limitations
 
-- Negotiation state is re-extracted for each opponent response and is not persisted
-  or incrementally updated.
-- Coach observations are persisted in PostgreSQL but are not returned by the API
-  or available through a retrieval endpoint.
-- Debriefs are persisted in PostgreSQL and exposed only as part of the explicit
-  completion response; no standalone retrieval endpoint exists.
-- Completion artifact generation occurs outside the database transaction. If the
-  persisted artifacts change before finalization, the workflow retries once with
-  fresh state; provider calls can therefore be repeated in that race.
-- The completion graph is synchronous, linear, and stateless. It does not use
-  checkpointing, conditional branches, retries, streaming, or human-in-the-loop
-  controls.
-- Strategies are persisted in PostgreSQL and have no standalone retrieval API.
-- Negotiator Memory is versioned and user-scoped in PostgreSQL; only its latest
-  profile is exposed, with no generation or history API.
-- Authentication uses bearer access tokens only; refresh tokens, revocation,
-  password reset, email verification, roles, and administrative APIs are not yet
-  implemented.
-- Adaptive difficulty is not implemented.
-- Opponent quality depends on the selected provider, model, scenario data, and
-  prompt design.
-- A single-instance EC2 Compose configuration and operating scripts are included,
-  but no AWS infrastructure has been provisioned and HTTPS, domain routing,
-  automated off-instance backups, and multi-instance deployment are not configured.
+- The live deployment uses an EC2 public IP over HTTP, without a custom domain or TLS.
+- Browser authentication uses an access token in `localStorage`; refresh tokens, revocation, password reset, and email verification are not implemented.
+- The completion graph is synchronous and linear; it does not currently use checkpointing, conditional routing, or human-in-the-loop controls.
+- Negotiator Memory is user-scoped and versioned, but only the latest profile is exposed through the public API.
+- Coach observations, Debriefs, and Strategies do not have standalone retrieval APIs.
+- Adaptive difficulty is not yet implemented.
+- The deployment is single-instance and does not include a load balancer, horizontal scaling, or automated off-instance backups.
+- Opponent and coaching quality depend on the selected model, prompts, scenario context, and available session history.
+
+---
 
 ## Roadmap
 
-Completed:
+### Completed
 
-- [x] FastAPI application foundation and versioned API
-- [x] Scenario domain and API
-- [x] Negotiation-session domain and API
-- [x] Negotiation-turn domain and API
-- [x] LLM provider abstraction and deterministic fake provider
-- [x] AWS Bedrock provider and configuration-based provider selection
-- [x] Scenario-aware opponent prompt builder
-- [x] Deterministic opponent behavior profiles by scenario difficulty
-- [x] LLM-assisted structured negotiation-state extraction
-- [x] Coach observation extraction, service, and per-exchange persistence
-- [x] Structured debrief extraction and PostgreSQL per-session persistence
-- [x] Deterministic NegotiationEngine orchestration layer
-- [x] Opponent service and opponent-response API
-- [x] Explicit, idempotent negotiation completion with debrief and strategy response
-- [x] Standalone structured Strategy extraction and PostgreSQL persistence
-- [x] Strategy integration with negotiation completion
-- [x] Isolated cross-session negotiator Memory extraction and version persistence
-- [x] Trigger-linked Memory integration with explicit negotiation completion
-- [x] Read-only Adaptive Context projection from latest Memory
-- [x] Coach Adaptive Integration using optional historical context
-- [x] Opponent Adaptive Integration using optional historical risk testing
-- [x] Linear LangGraph orchestration for the negotiation completion lifecycle
-- [x] SQLAlchemy repositories for every persisted negotiation aggregate
-- [x] PostgreSQL schema, Alembic migration, and lifecycle persistence verification
-- [x] Production-like local API and PostgreSQL containers with migration startup
-- [x] Single-instance EC2 Compose configuration and PostgreSQL backup helper
-- [x] Username/password authentication with bcrypt and expiring JWT access tokens
-- [x] Per-user negotiation-resource ownership and authorization
-- [x] User-isolated Negotiator Memory and Adaptive Context
-- [x] Compact Negotiator Memory V2 and authenticated dashboard Coaching Snapshot
-- [x] Persisted per-negotiation dashboard takeaways and full-review navigation
-- [x] Completion-scoped Unit of Work with LLM generation outside the transaction
-- [x] Authenticated React practice dashboard, streaming negotiation workspace,
-  and completion results
-- [x] Production React build served by Nginx with same-origin API proxying
+- [x] Versioned FastAPI application
+- [x] React and TypeScript frontend
+- [x] Username/password authentication with JWT
+- [x] Per-user ownership and anti-enumeration
+- [x] AI-generated negotiation scenarios
+- [x] Scenario-aware opponent generation
+- [x] Structured negotiation-state extraction
+- [x] Streaming opponent responses
+- [x] Silent coach observations
+- [x] Structured Debrief and Strategy generation
+- [x] Cross-session Negotiator Memory V2
+- [x] Adaptive context for Coach and Opponent
+- [x] LangGraph completion orchestration
+- [x] Completion-scoped Unit of Work
+- [x] PostgreSQL persistence and Alembic migrations
+- [x] Dockerised local and production execution
+- [x] Nginx production frontend and reverse proxy
+- [x] AWS EC2 and Amazon Bedrock deployment
 
-Planned:
+### Planned
 
-- [ ] Richer multi-round opponent behavior
-- [ ] Standalone Coach, debrief, strategy, Memory-generation, and Memory-history APIs
 - [ ] Adaptive difficulty
-- [ ] Durable editable user profiles beyond authentication identity
-- [ ] HTTPS and domain routing
+- [ ] Richer multi-round opponent tactics
+- [ ] Voice-based negotiation practice
+- [ ] Standalone coaching-artifact and memory-history APIs
+- [ ] Editable user profiles
+- [ ] HTTPS and custom domain
+- [ ] Automated off-instance backups
+- [ ] Multi-instance production architecture
 
-## License status
+---
 
-This repository does not currently include a license file. A project license has
-not yet been declared.
+## License
+
+This repository does not currently include a licence file. No project licence has been declared yet.
