@@ -15,7 +15,7 @@ Master salary negotiations, promotions, client conversations, vendor discussions
 ---
 
 ## See Negotia in action
-
+C:\Users\bikas\OneDrive\bikash-singhal-dev\negotia\docs\images\negotia-demo.mp4
 [▶ Watch the product demo](docs/images/negotia-demo.mp4)
 
 <p align="center">
