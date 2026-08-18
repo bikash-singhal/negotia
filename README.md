@@ -163,47 +163,40 @@ The production topology exposes only Nginx on port 80. FastAPI and PostgreSQL re
 ### Application architecture
 
 ```mermaid
-flowchart TD
-    Browser["Browser"]
-    Nginx["Nginx<br/>React SPA + reverse proxy"]
-    API["FastAPI /api/v1"]
-    Auth["Authentication & ownership"]
-    Engine["NegotiationEngine"]
-    Scenario["Scenario Generator"]
-    Opponent["Opponent + state extraction"]
-    Coach["Coach observations"]
-    Graph["LangGraph completion workflow"]
-    Debrief["Debrief"]
-    Strategy["Strategy"]
-    Memory["Negotiator Memory"]
-    Context["Adaptive Context"]
-    DB[("PostgreSQL")]
-    Bedrock["Amazon Bedrock"]
+flowchart LR
+    Browser["Browser"] --> Nginx["Nginx<br/>React SPA + Reverse Proxy"]
+    Nginx -->|API requests| API["FastAPI /api/v1"]
 
-    Browser --> Nginx
-    Nginx -->|"/api/*"| API
-    API --> Auth
-    API --> Engine
-    Engine --> Scenario
-    Engine --> Opponent
-    Engine --> Coach
-    Engine --> Graph
-    Scenario --> Bedrock
-    Opponent --> Bedrock
-    Coach --> Bedrock
-    Graph --> Debrief --> Bedrock
-    Graph --> Strategy --> Bedrock
-    Graph --> Memory --> Bedrock
-    Memory --> Context
+    API --> Auth["Authentication<br/>& Ownership"]
+    API --> Engine["NegotiationEngine"]
+
+    Engine --> Scenario["Scenario<br/>Generator"]
+    Engine --> Opponent["Opponent +<br/>State Extraction"]
+    Engine --> Coach["Coach<br/>Observations"]
+    Engine --> Graph["LangGraph<br/>Completion Workflow"]
+
+    Graph --> Debrief["Debrief"]
+    Graph --> Strategy["Strategy"]
+    Graph --> Memory["Negotiator<br/>Memory"]
+
+    Memory --> Context["Adaptive<br/>Context"]
     Context --> Opponent
     Context --> Coach
-    Auth --> DB
+
+    Auth --> DB[("PostgreSQL")]
     Scenario --> DB
     Opponent --> DB
     Coach --> DB
     Debrief --> DB
     Strategy --> DB
     Memory --> DB
+
+    Scenario --> Bedrock["Amazon Bedrock"]
+    Opponent --> Bedrock
+    Coach --> Bedrock
+    Debrief --> Bedrock
+    Strategy --> Bedrock
+    Memory --> Bedrock
 ```
 
 ### Completion workflow
