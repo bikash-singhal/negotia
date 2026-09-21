@@ -1,4 +1,6 @@
 .git
+**/.aws
+**/.hermes
 .gitignore
 .gitattributes
 .venv

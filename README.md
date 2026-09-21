@@ -384,6 +384,43 @@ Replace the production database password and JWT secret with strong random value
 
 Attach an EC2 IAM role for Bedrock rather than storing AWS credentials on the server.
 
+### Hermes in the API image
+
+The Dockerfile installs official Nous Research Hermes **0.21.3**, release
+[`v2026.9.14`](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.9.14),
+at commit `345cd2b057a452236de401d3534b8502a7465e8d`. It uses the official
+[source installation](https://github.com/NousResearch/hermes-agent/blob/v2026.9.14/CONTRIBUTING.md#development-setup)
+with `uv sync --frozen --extra bedrock --extra mcp --no-dev`, retaining the
+upstream lockfile in a separate `/opt/hermes/.venv`. The API's Python 3.12,
+dependencies and lockfile are unchanged. Git is confined to the build stage;
+browser, Node.js, voice and messaging extras are not installed.
+
+Set `HERMES_ENABLED=true` in `.env.production` to enable the existing optional
+research adapter. Defaults are `HERMES_ENABLED=false`, `HERMES_COMMAND=hermes`
+and `HERMES_TIMEOUT_SECONDS=30`. The shared remote MCP endpoint defaults to
+`MCP_SALARY_ENDPOINT=https://aidevboard.com/mcp`. The independent deterministic
+MCP integration retains `MCP_SALARY_ENABLED=false` and
+`MCP_SALARY_TIMEOUT_SECONDS=10`; enabling Hermes does not enable that integration.
+Both paths keep their existing fallback behavior.
+
+Keep `NegotiaEC2BedrockRole` attached with the required Bedrock permissions.
+The production Compose override removes `AWS_PROFILE`, including a profile
+inherited from local Compose configuration. No AWS credentials or local Hermes
+configuration are copied. Hermes uses boto3's default chain to reach EC2 IMDS;
+retain the instance's working container metadata access (IMDSv2 response hop
+limit normally needs to be 2 for a Docker bridge). If using an HTTP proxy,
+bypass it for `169.254.169.254`. Allow outbound HTTPS to Bedrock and the MCP
+endpoint. No Hermes setup wizard, credential volume or persistent Hermes home
+is required: the adapter creates temporary configuration for each invocation.
+
+Verify a built image without starting the API or running migrations:
+
+```bash
+docker run --rm --entrypoint hermes negotia-api:hermes --version
+```
+
+### Network access
+
 Recommended inbound rules:
 
 - SSH `22` only from the administrator's trusted IP

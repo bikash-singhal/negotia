@@ -78,3 +78,24 @@ def test_timeout_terminates_the_hermes_process_tree(
         _run_hermes(["hermes"], env={}, timeout=0.1)
 
     terminate.assert_called_once_with(process)
+
+
+def test_no_profile_uses_default_aws_chain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AWS_PROFILE", "ambient-local-profile")
+    environment = _build_environment(tmp_path, "us-east-1", None)
+    assert "AWS_PROFILE" not in environment
+    assert "AWS_EC2_METADATA_DISABLED" not in environment
+
+
+def test_disabled_hermes_never_starts_a_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    run = MagicMock(side_effect=AssertionError("Hermes must not run"))
+    monkeypatch.setattr(research_client, "_run_hermes", run)
+    client = research_client.HermesCliResearchClient(
+        enabled=False, command="missing-hermes", timeout_seconds=30,
+        endpoint="https://aidevboard.com/mcp", model_id="amazon.nova-lite-v1:0",
+        aws_region="us-east-1", aws_profile=None,
+    )
+    assert client.research(MagicMock(), "test") is None
+    run.assert_not_called()

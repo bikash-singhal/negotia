@@ -33,7 +33,13 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-fake}
       BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-amazon.nova-lite-v1:0}
       AWS_REGION: ${AWS_REGION:-us-east-1}
-      AWS_PROFILE: ${AWS_PROFILE:-}
+      AWS_PROFILE:
+      HERMES_ENABLED: ${HERMES_ENABLED:-false}
+      HERMES_COMMAND: ${HERMES_COMMAND:-hermes}
+      HERMES_TIMEOUT_SECONDS: ${HERMES_TIMEOUT_SECONDS:-30}
+      MCP_SALARY_ENABLED: ${MCP_SALARY_ENABLED:-false}
+      MCP_SALARY_ENDPOINT: ${MCP_SALARY_ENDPOINT:-https://aidevboard.com/mcp}
+      MCP_SALARY_TIMEOUT_SECONDS: ${MCP_SALARY_TIMEOUT_SECONDS:-10}
     depends_on:
       database:
         condition: service_healthy

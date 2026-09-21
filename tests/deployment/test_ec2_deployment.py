@@ -37,7 +37,8 @@ def test_production_configuration_excludes_aws_credentials_and_profiles() -> Non
 
     assert "AWS_ACCESS_KEY_ID" not in production_configuration
     assert "AWS_SECRET_ACCESS_KEY" not in production_configuration
-    assert "AWS_PROFILE" not in production_configuration
+    assert "AWS_PROFILE: !reset null" in _read("compose.production.yaml")
+    assert "AWS_PROFILE" not in _read(".env.production.example")
 
 
 def test_deployment_script_uses_safe_compose_operations() -> None:
@@ -88,6 +89,12 @@ def test_production_environment_uses_placeholders_without_credentials() -> None:
         "LLM_PROVIDER": "bedrock",
         "BEDROCK_MODEL_ID": "amazon.nova-lite-v1:0",
         "AWS_REGION": "us-east-1",
+        "HERMES_ENABLED": "false",
+        "HERMES_COMMAND": "hermes",
+        "HERMES_TIMEOUT_SECONDS": "30",
+        "MCP_SALARY_ENABLED": "false",
+        "MCP_SALARY_ENDPOINT": "https://aidevboard.com/mcp",
+        "MCP_SALARY_TIMEOUT_SECONDS": "10",
     }
     assert "local-development-password" not in values.values()
 
