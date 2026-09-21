@@ -93,6 +93,7 @@ class HermesCliResearchClient:
                         self._command,
                         "chat",
                         "--oneshot",
+                        "--quiet",
                         "--query-file",
                         str(query_path),
                         "--provider",
@@ -116,12 +117,19 @@ class HermesCliResearchClient:
 
 
 def _write_hermes_config(root: Path, endpoint: str, model_id: str, region: str) -> None:
+    # Hermes 0.21.3 otherwise probes Bedrock with 1.3M/2.2M-token requests on
+    # every fresh HERMES_HOME. Nova Lite v1 has a documented 300K context.
+    # Do not apply that limit to other models (including Nova Lite v2).
+    context_config = (
+        ["  context_length: 300000"] if model_id == "amazon.nova-lite-v1:0" else []
+    )
     (root / "config.yaml").write_text(
         "\n".join(
             [
                 "model:",
                 "  provider: bedrock",
                 f"  default: {model_id}",
+                *context_config,
                 "bedrock:",
                 f"  region: {region}",
                 "tools:",

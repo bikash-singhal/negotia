@@ -41,6 +41,44 @@ def test_hermes_config_exposes_the_real_tool_schema_directly(tmp_path: Path) -> 
 
     assert "tool_search:\n    enabled: off" in config
     assert "include: [get_salary_data]" in config
+    assert "  context_length: 300000" in config
+
+
+def test_context_override_is_not_applied_to_other_models(tmp_path: Path) -> None:
+    _write_hermes_config(
+        tmp_path, "https://aidevboard.com/mcp", "amazon.nova-2-lite-v1:0", "us-east-1",
+    )
+    assert "context_length" not in (tmp_path / "config.yaml").read_text(encoding="utf-8")
+
+
+def test_research_uses_quiet_oneshot_and_parses_only_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = (
+        "<negotiation_research>\nfacts: Salary median is $221,000.\n"
+        "recommendation: Compare the offer with the median.\n</negotiation_research>"
+    )
+
+    def run(command: list[str], *, env: dict[str, str], timeout: float):
+        assert command[:4] == ["hermes", "chat", "--oneshot", "--quiet"]
+        assert "--ignore-rules" in command
+        assert command[command.index("--toolsets") + 1] == "aidevboard"
+        assert timeout == 30
+        assert "AWS_PROFILE" not in env
+        query = Path(command[command.index("--query-file") + 1]).read_text(encoding="utf-8")
+        assert "<external facts used, or none>" in query
+        return subprocess.CompletedProcess(command, 0, response, "")
+
+    monkeypatch.setattr(research_client, "_run_hermes", run)
+    client = research_client.HermesCliResearchClient(
+        enabled=True, command="hermes", timeout_seconds=30,
+        endpoint="https://aidevboard.com/mcp", model_id="amazon.nova-lite-v1:0",
+        aws_region="us-east-1", aws_profile=None,
+    )
+    result = client.research(MagicMock(), "Compare my salary offer.")
+    assert result is not None
+    assert result.facts == "Salary median is $221,000."
+    assert result.recommendation == "Compare the offer with the median."
 
 
 def test_hermes_environment_excludes_ambient_secrets(
