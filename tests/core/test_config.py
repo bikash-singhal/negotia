@@ -36,6 +36,19 @@ def test_bedrock_model_id_can_be_overridden_from_environment(
     assert settings.bedrock_model_id == "custom-model-id"
 
 
+def test_mcp_salary_defaults_are_safe_and_configurable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MCP_SALARY_ENABLED", "true")
+    monkeypatch.setenv("MCP_SALARY_TIMEOUT_SECONDS", "12.5")
+
+    settings = Settings()
+
+    assert settings.mcp_salary_enabled is True
+    assert settings.mcp_salary_endpoint == "https://aidevboard.com/mcp"
+    assert settings.mcp_salary_timeout_seconds == 12.5
+
+
 def test_invalid_llm_provider_fails_validation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -9,6 +9,7 @@ dependencies = [
     "boto3>=1.43.58",
     "fastapi>=0.140.9",
     "langgraph>=1.2.10",
+    "mcp>=1.0.0",
     "psycopg[binary]>=3.3.4",
     "pwdlib[bcrypt]>=0.3.0",
     "pydantic-settings>=2.14.2",

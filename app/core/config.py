@@ -1,6 +1,6 @@
 from typing import Annotated, Literal
 
-from pydantic import Field, PositiveInt, SecretStr
+from pydantic import Field, PositiveFloat, PositiveInt, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     aws_profile: str | None = None
     llm_provider: Literal["fake", "bedrock"] = "fake"
     bedrock_model_id: str = "amazon.nova-lite-v1:0"
+    mcp_salary_enabled: bool = False
+    mcp_salary_endpoint: str = "https://aidevboard.com/mcp"
+    mcp_salary_timeout_seconds: PositiveFloat = 10.0
     jwt_secret_key: Annotated[SecretStr, Field(min_length=32)] = SecretStr(
         "development-only-secret-change-me"
     )

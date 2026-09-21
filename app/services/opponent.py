@@ -21,12 +21,19 @@ from app.domains.negotiation_turn.models import (
 )
 from app.domains.negotiation_turn.repository import NegotiationTurnRepository
 from app.domains.opponent.profile_builder import OpponentProfileBuilder
+from app.domains.scenario.models import Scenario
 from app.domains.scenario.repository import ScenarioRepository
 from app.llm.observability import (
     generate_with_observability,
     stream_with_observability,
 )
 from app.llm.provider import LLMProvider
+from app.mcp.salary_client import (
+    SalaryDataClient,
+    SalaryDataQuery,
+    SalaryMarketData,
+    validate_query,
+)
 from app.prompts.opponent import OpponentPromptBuilder
 from app.services.adaptive_context import AdaptiveContextService
 from app.services.negotiation_state import NegotiationStateExtractor
@@ -63,6 +70,7 @@ class OpponentService:
         prompt_builder: OpponentPromptBuilder,
         llm_provider: LLMProvider,
         adaptive_context_service: AdaptiveContextService,
+        salary_data_client: SalaryDataClient | None = None,
     ) -> None:
         self._negotiation_repository = negotiation_repository
         self._scenario_repository = scenario_repository
@@ -72,6 +80,7 @@ class OpponentService:
         self._prompt_builder = prompt_builder
         self._llm_provider = llm_provider
         self._adaptive_context_service = adaptive_context_service
+        self._salary_data_client = salary_data_client
         self._in_flight_lock = Lock()
         self._in_flight_sessions: dict[UUID, UUID] = {}
 
@@ -208,12 +217,22 @@ class OpponentService:
         state: NegotiationState = self._state_extractor.extract(turns)
         profile = self._profile_builder.build(scenario.difficulty)
         adaptive_context = self._adaptive_context_service.get_context(user_id)
-        system_prompt = self._prompt_builder.build_system_prompt(
-            scenario,
-            profile,
-            state,
-            adaptive_context,
-        )
+        salary_market_data = self._get_salary_market_data(scenario, latest_turn)
+        if salary_market_data is None:
+            system_prompt = self._prompt_builder.build_system_prompt(
+                scenario,
+                profile,
+                state,
+                adaptive_context,
+            )
+        else:
+            system_prompt = self._prompt_builder.build_system_prompt(
+                scenario,
+                profile,
+                state,
+                adaptive_context,
+                salary_market_data,
+            )
         user_prompt = self._prompt_builder.build_user_prompt(turns)
         return OpponentResponsePreparation(
             session_id=session_id,
@@ -224,6 +243,27 @@ class OpponentService:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
         )
+
+    def _get_salary_market_data(
+        self,
+        scenario: Scenario,
+        latest_turn: NegotiationTurn,
+    ) -> SalaryMarketData | None:
+        if self._salary_data_client is None or not _is_salary_related(
+            scenario,
+            latest_turn.content,
+        ):
+            return None
+
+        try:
+            query = _build_salary_query(scenario, latest_turn.content)
+            return self._salary_data_client.get_salary_data(query)
+        except Exception as exc:  # noqa: BLE001 - lookup availability must not block turns.
+            logger.warning(
+                "Salary market lookup failed; continuing without market data (%s).",
+                type(exc).__name__,
+            )
+            return None
 
     def _acquire_session(self, session_id: UUID) -> UUID:
         with self._in_flight_lock:
@@ -248,3 +288,62 @@ class OpponentService:
         with self._in_flight_lock:
             if self._in_flight_sessions.get(session_id) == lease_id:
                 del self._in_flight_sessions[session_id]
+
+
+def _is_salary_related(scenario: Scenario, candidate_message: str) -> bool:
+    scenario_text = " ".join(
+        str(getattr(scenario, field, ""))
+        for field in ("title", "description", "industry", "opponent_role", "objective")
+    ).lower()
+    text = f"{scenario_text} {candidate_message}".lower()
+    return any(
+        phrase in text
+        for phrase in (
+            "salary",
+            "compensation",
+            "base pay",
+            "annual pay",
+            "total pay",
+            "job offer",
+            "employment offer",
+        )
+    )
+
+
+def _build_salary_query(
+    scenario: Scenario,
+    candidate_message: str,
+) -> SalaryDataQuery:
+    text = " ".join(
+        [
+            str(getattr(scenario, field, ""))
+            for field in ("title", "description", "industry", "opponent_role", "objective")
+        ]
+        + [candidate_message]
+    ).lower()
+
+    level = next(
+        (level for level in ("principal", "lead", "senior", "mid", "junior") if level in text),
+        None,
+    )
+    if level is None and ("mid-level" in text or "mid level" in text):
+        level = "mid"
+
+    workplace = next(
+        (
+            workplace
+            for workplace in ("remote", "hybrid", "onsite")
+            if workplace in text
+        ),
+        None,
+    )
+    if workplace is None and "on-site" in text:
+        workplace = "onsite"
+
+    return validate_query(
+        SalaryDataQuery(
+            tag="llm" if "llm" in text else None,
+            level=level,
+            workplace=workplace,
+        )
+    )

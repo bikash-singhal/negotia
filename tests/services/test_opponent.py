@@ -32,6 +32,7 @@ from app.domains.scenario.models import Scenario, ScenarioDifficulty
 from app.domains.scenario.repository import ScenarioRepository
 from app.llm.fake import FakeLLMProvider
 from app.llm.provider import LLMProvider
+from app.mcp.salary_client import SalaryDataQuery, SalaryMarketData
 from app.prompts.opponent import OpponentPromptBuilder
 from app.services.adaptive_context import AdaptiveContextService
 from app.services.negotiation_state import NegotiationStateExtractor
@@ -40,6 +41,16 @@ from tests.ownership import TEST_USER_ID
 
 FAKE_RESPONSE = (
     "I understand your position, but those terms are difficult for us to accept."
+)
+
+SALARY_MARKET_DATA = SalaryMarketData(
+    average=213400,
+    median=205830,
+    p25=190000,
+    p75=241700,
+    minimum=87500,
+    maximum=365040,
+    count=121,
 )
 
 
@@ -696,3 +707,105 @@ def test_only_one_response_may_be_in_flight_for_a_session() -> None:
         preparation.user_turn,
         result.opponent_turn,
     ]
+
+
+def test_salary_negotiation_adds_market_data_to_opponent_prompt() -> None:
+    negotiation_repository = NegotiationRepository()
+    scenario_repository = ScenarioRepository()
+    turn_repository = NegotiationTurnRepository()
+    scenario = _create_scenario(scenario_repository)
+    scenario.title = "Senior LLM engineer compensation negotiation"
+    scenario.description = "A remote role with an annual salary package."
+    session = _create_session(negotiation_repository, scenario.scenario_id)
+    _create_turn(
+        turn_repository,
+        session.id,
+        content="I am seeking senior LLM compensation for this remote role.",
+    )
+    salary_client = MagicMock()
+    salary_client.get_salary_data.return_value = SALARY_MARKET_DATA
+    provider = MagicMock(spec=LLMProvider)
+    provider.generate.return_value = FAKE_RESPONSE
+    service = OpponentService(
+        negotiation_repository,
+        scenario_repository,
+        turn_repository,
+        _create_state_extractor(),
+        OpponentProfileBuilder(),
+        OpponentPromptBuilder(),
+        provider,
+        _create_adaptive_context_service(),
+        salary_client,
+    )
+
+    service.generate_response(session.id, TEST_USER_ID)
+
+    salary_client.get_salary_data.assert_called_once_with(
+        SalaryDataQuery(tag="llm", level="senior", workplace="remote")
+    )
+    system_prompt = provider.generate.call_args.kwargs["system_prompt"]
+    assert "EXTERNAL MARKET DATA" in system_prompt
+    assert "Median salary: $205,830" in system_prompt
+
+
+def test_non_salary_negotiation_does_not_call_salary_client() -> None:
+    negotiation_repository = NegotiationRepository()
+    scenario_repository = ScenarioRepository()
+    turn_repository = NegotiationTurnRepository()
+    scenario = _create_scenario(scenario_repository)
+    session = _create_session(negotiation_repository, scenario.scenario_id)
+    _create_turn(
+        turn_repository,
+        session.id,
+        content="I can offer $28,000 for this car.",
+    )
+    salary_client = MagicMock()
+    provider = MagicMock(spec=LLMProvider)
+    provider.generate.return_value = FAKE_RESPONSE
+    service = OpponentService(
+        negotiation_repository,
+        scenario_repository,
+        turn_repository,
+        _create_state_extractor(),
+        OpponentProfileBuilder(),
+        OpponentPromptBuilder(),
+        provider,
+        _create_adaptive_context_service(),
+        salary_client,
+    )
+
+    service.generate_response(session.id, TEST_USER_ID)
+
+    salary_client.get_salary_data.assert_not_called()
+
+
+def test_salary_mcp_failure_does_not_prevent_opponent_response() -> None:
+    negotiation_repository = NegotiationRepository()
+    scenario_repository = ScenarioRepository()
+    turn_repository = NegotiationTurnRepository()
+    scenario = _create_scenario(scenario_repository)
+    scenario.objective = "Set a senior salary package for the role."
+    session = _create_session(negotiation_repository, scenario.scenario_id)
+    _create_turn(turn_repository, session.id, content="My salary target is $210,000.")
+    salary_client = MagicMock()
+    salary_client.get_salary_data.side_effect = RuntimeError("MCP unavailable")
+    provider = MagicMock(spec=LLMProvider)
+    provider.generate.return_value = FAKE_RESPONSE
+    service = OpponentService(
+        negotiation_repository,
+        scenario_repository,
+        turn_repository,
+        _create_state_extractor(),
+        OpponentProfileBuilder(),
+        OpponentPromptBuilder(),
+        provider,
+        _create_adaptive_context_service(),
+        salary_client,
+    )
+
+    result = service.generate_response(session.id, TEST_USER_ID)
+
+    assert result.opponent_turn.content == FAKE_RESPONSE
+    salary_client.get_salary_data.assert_called_once()
+    system_prompt = provider.generate.call_args.kwargs["system_prompt"]
+    assert "EXTERNAL MARKET DATA" not in system_prompt

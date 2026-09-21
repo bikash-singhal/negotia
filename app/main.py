@@ -25,6 +25,7 @@ from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.service import ScenarioService
 from app.domains.user.service import UserService
 from app.llm.factory import build_llm_provider
+from app.mcp.salary_client import McpSalaryDataClient
 from app.prompts.coach import CoachPromptBuilder
 from app.prompts.debrief import DebriefPromptBuilder
 from app.prompts.memory import MemoryPromptBuilder
@@ -133,6 +134,11 @@ memory_service = MemoryService(
     memory_repository,
 )
 adaptive_context_service = AdaptiveContextService(memory_service)
+salary_data_client = McpSalaryDataClient(
+    enabled=settings.mcp_salary_enabled,
+    endpoint=settings.mcp_salary_endpoint,
+    timeout_seconds=settings.mcp_salary_timeout_seconds,
+)
 coach_service = CoachService(
     coach_observation_extractor,
     coach_observation_repository,
@@ -162,6 +168,7 @@ opponent_service = OpponentService(
     OpponentPromptBuilder(),
     llm_provider,
     adaptive_context_service,
+    salary_data_client,
 )
 app.state.opponent_service = opponent_service
 app.state.coach_service = coach_service
