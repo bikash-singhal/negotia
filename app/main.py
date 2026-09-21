@@ -24,6 +24,7 @@ from app.domains.negotiation_turn.service import NegotiationTurnService
 from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.service import ScenarioService
 from app.domains.user.service import UserService
+from app.hermes.research_client import HermesCliResearchClient
 from app.llm.factory import build_llm_provider
 from app.mcp.salary_client import McpSalaryDataClient
 from app.prompts.coach import CoachPromptBuilder
@@ -139,6 +140,15 @@ salary_data_client = McpSalaryDataClient(
     endpoint=settings.mcp_salary_endpoint,
     timeout_seconds=settings.mcp_salary_timeout_seconds,
 )
+hermes_research_client = HermesCliResearchClient(
+    enabled=settings.hermes_enabled,
+    command=settings.hermes_command,
+    timeout_seconds=settings.hermes_timeout_seconds,
+    endpoint=settings.mcp_salary_endpoint,
+    model_id=settings.bedrock_model_id,
+    aws_region=settings.aws_region,
+    aws_profile=settings.aws_profile,
+)
 coach_service = CoachService(
     coach_observation_extractor,
     coach_observation_repository,
@@ -169,6 +179,7 @@ opponent_service = OpponentService(
     llm_provider,
     adaptive_context_service,
     salary_data_client,
+    hermes_research_client,
 )
 app.state.opponent_service = opponent_service
 app.state.coach_service = coach_service

@@ -1,0 +1,1 @@
+"""Optional Hermes Agent integration."""

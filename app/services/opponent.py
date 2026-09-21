@@ -23,6 +23,7 @@ from app.domains.negotiation_turn.repository import NegotiationTurnRepository
 from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.models import Scenario
 from app.domains.scenario.repository import ScenarioRepository
+from app.hermes.research_client import HermesResearchClient, HermesResearchContext
 from app.llm.observability import (
     generate_with_observability,
     stream_with_observability,
@@ -71,6 +72,7 @@ class OpponentService:
         llm_provider: LLMProvider,
         adaptive_context_service: AdaptiveContextService,
         salary_data_client: SalaryDataClient | None = None,
+        hermes_research_client: HermesResearchClient | None = None,
     ) -> None:
         self._negotiation_repository = negotiation_repository
         self._scenario_repository = scenario_repository
@@ -81,6 +83,7 @@ class OpponentService:
         self._llm_provider = llm_provider
         self._adaptive_context_service = adaptive_context_service
         self._salary_data_client = salary_data_client
+        self._hermes_research_client = hermes_research_client
         self._in_flight_lock = Lock()
         self._in_flight_sessions: dict[UUID, UUID] = {}
 
@@ -218,7 +221,11 @@ class OpponentService:
         profile = self._profile_builder.build(scenario.difficulty)
         adaptive_context = self._adaptive_context_service.get_context(user_id)
         salary_market_data = self._get_salary_market_data(scenario, latest_turn)
-        if salary_market_data is None:
+        hermes_research = self._get_hermes_research(scenario, latest_turn)
+        hermes_research_context = None if hermes_research is None else (
+            f"- Facts: {hermes_research.facts}\n- Recommendation: {hermes_research.recommendation}"
+        )
+        if salary_market_data is None and hermes_research_context is None:
             system_prompt = self._prompt_builder.build_system_prompt(
                 scenario,
                 profile,
@@ -232,6 +239,7 @@ class OpponentService:
                 state,
                 adaptive_context,
                 salary_market_data,
+                hermes_research_context,
             )
         user_prompt = self._prompt_builder.build_user_prompt(turns)
         return OpponentResponsePreparation(
@@ -254,13 +262,28 @@ class OpponentService:
             latest_turn.content,
         ):
             return None
-
         try:
             query = _build_salary_query(scenario, latest_turn.content)
             return self._salary_data_client.get_salary_data(query)
         except Exception as exc:  # noqa: BLE001 - lookup availability must not block turns.
             logger.warning(
                 "Salary market lookup failed; continuing without market data (%s).",
+                type(exc).__name__,
+            )
+            return None
+
+    def _get_hermes_research(
+        self,
+        scenario: Scenario,
+        latest_turn: NegotiationTurn,
+    ) -> HermesResearchContext | None:
+        if self._hermes_research_client is None:
+            return None
+        try:
+            return self._hermes_research_client.research(scenario, latest_turn.content)
+        except Exception as exc:  # noqa: BLE001 - external research must not block turns.
+            logger.warning(
+                "Hermes research failed; continuing without it (%s).",
                 type(exc).__name__,
             )
             return None

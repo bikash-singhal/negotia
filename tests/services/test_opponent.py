@@ -30,6 +30,7 @@ from app.domains.negotiation_turn.repository import NegotiationTurnRepository
 from app.domains.opponent.profile_builder import OpponentProfileBuilder
 from app.domains.scenario.models import Scenario, ScenarioDifficulty
 from app.domains.scenario.repository import ScenarioRepository
+from app.hermes.research_client import HermesResearchContext
 from app.llm.fake import FakeLLMProvider
 from app.llm.provider import LLMProvider
 from app.mcp.salary_client import SalaryDataQuery, SalaryMarketData
@@ -809,3 +810,66 @@ def test_salary_mcp_failure_does_not_prevent_opponent_response() -> None:
     salary_client.get_salary_data.assert_called_once()
     system_prompt = provider.generate.call_args.kwargs["system_prompt"]
     assert "EXTERNAL MARKET DATA" not in system_prompt
+
+
+def test_hermes_research_failure_does_not_prevent_opponent_response() -> None:
+    negotiation_repository = NegotiationRepository()
+    scenario_repository = ScenarioRepository()
+    turn_repository = NegotiationTurnRepository()
+    scenario = _create_scenario(scenario_repository)
+    session = _create_session(negotiation_repository, scenario.scenario_id)
+    _create_turn(turn_repository, session.id, content="I can offer $28,000 for this car.")
+    hermes_client = MagicMock()
+    hermes_client.research.side_effect = RuntimeError("Hermes unavailable")
+    provider = MagicMock(spec=LLMProvider)
+    provider.generate.return_value = FAKE_RESPONSE
+    service = OpponentService(
+        negotiation_repository,
+        scenario_repository,
+        turn_repository,
+        _create_state_extractor(),
+        OpponentProfileBuilder(),
+        OpponentPromptBuilder(),
+        provider,
+        _create_adaptive_context_service(),
+        hermes_research_client=hermes_client,
+    )
+
+    result = service.generate_response(session.id, TEST_USER_ID)
+
+    assert result.opponent_turn.content == FAKE_RESPONSE
+    hermes_client.research.assert_called_once()
+    assert "EXTERNAL AGENT RESEARCH" not in provider.generate.call_args.kwargs["system_prompt"]
+
+
+def test_hermes_research_adds_grounded_context_to_opponent_prompt() -> None:
+    negotiation_repository = NegotiationRepository()
+    scenario_repository = ScenarioRepository()
+    turn_repository = NegotiationTurnRepository()
+    scenario = _create_scenario(scenario_repository)
+    session = _create_session(negotiation_repository, scenario.scenario_id)
+    _create_turn(turn_repository, session.id, content="My requested salary is $220,000.")
+    hermes_client = MagicMock()
+    hermes_client.research.return_value = HermesResearchContext(
+        facts="Median salary is $221,000.",
+        recommendation="Keep the offer near the market median.",
+    )
+    provider = MagicMock(spec=LLMProvider)
+    provider.generate.return_value = FAKE_RESPONSE
+    service = OpponentService(
+        negotiation_repository,
+        scenario_repository,
+        turn_repository,
+        _create_state_extractor(),
+        OpponentProfileBuilder(),
+        OpponentPromptBuilder(),
+        provider,
+        _create_adaptive_context_service(),
+        hermes_research_client=hermes_client,
+    )
+
+    service.generate_response(session.id, TEST_USER_ID)
+
+    system_prompt = provider.generate.call_args.kwargs["system_prompt"]
+    assert "EXTERNAL AGENT RESEARCH" in system_prompt
+    assert "Median salary is $221,000." in system_prompt

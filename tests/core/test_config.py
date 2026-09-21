@@ -49,6 +49,10 @@ def test_mcp_salary_defaults_are_safe_and_configurable(
     assert settings.mcp_salary_timeout_seconds == 12.5
 
 
+def test_hermes_is_disabled_by_default() -> None:
+    assert Settings().hermes_enabled is False
+
+
 def test_invalid_llm_provider_fails_validation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

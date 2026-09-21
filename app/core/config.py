@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     mcp_salary_enabled: bool = False
     mcp_salary_endpoint: str = "https://aidevboard.com/mcp"
     mcp_salary_timeout_seconds: PositiveFloat = 10.0
+    hermes_enabled: bool = False
+    hermes_command: str = "hermes"
+    hermes_timeout_seconds: PositiveFloat = 30.0
     jwt_secret_key: Annotated[SecretStr, Field(min_length=32)] = SecretStr(
         "development-only-secret-change-me"
     )
