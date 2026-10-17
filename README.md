@@ -120,7 +120,6 @@ The high-level workflow is intentionally controlled by application logic for rel
 
 The model does not dynamically choose the next system node. A deterministic engine and a linear LangGraph completion workflow coordinate specialised reasoning components, persistence, validation, and idempotency.
 
-This provides agentic behaviour without overstating the system as a fully autonomous multi-agent platform.
 
 ---
 
