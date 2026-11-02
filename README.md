@@ -8,7 +8,7 @@
 
 Master salary negotiations, promotions, client conversations, vendor discussions, and business deals through realistic AI-powered practice.
 
-[🌐 Live Demo](http://54.227.221.0/) · [🎬 Product Demo](docs/images/negotia-demo.mp4) · [🏗️ Architecture](#architecture) · [🚀 Quick Start](#quick-start)
+· [🎬 Product Demo](docs/images/negotia-demo.mp4) · [🏗️ Architecture](#architecture) · [🚀 Quick Start](#quick-start)
 
 </div>
 
